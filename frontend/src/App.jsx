@@ -142,11 +142,56 @@ export default function App() {
   };
 
   const applyData = (data) => {
-    setOpeningBalance(data.opening_balance ?? -105100.87);
-    setStartDate(data.start_date || '01-10-2026');
-    setEndDate(data.end_date || '06.11.2026');
+    setOpeningBalance(data.opening_balance ?? 0);
+    setStartDate(data.start_date ?? '');
+    setEndDate(data.end_date ?? '');
     setTransactions(data.transactions ?? []);
     setSummary(data.summary ?? null);
+  };
+
+  const handleNewSession = async () => {
+    if (hasUnsavedChanges && activeSessionId) {
+      await saveSession();
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `Petty Cash ${new Date().toLocaleString('en-IN', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+          })}`,
+          opening_balance: 0,
+          start_date: '',
+          end_date: '',
+          transactions: [],
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to create a new session');
+      const created = await res.json();
+      const sessionRes = await fetch(`/api/sessions/${created.id}`);
+      if (!sessionRes.ok) throw new Error('Failed to load the new session');
+      const session = await sessionRes.json();
+      applyData(session);
+      setActiveSessionId(session.id);
+      setActiveSessionName(session.name);
+      setHasUnsavedChanges(false);
+      setSearchTerm('');
+      setSelectedProject('ALL');
+      setSelectedLedger('ALL');
+      setActiveTab('transactions');
+      await fetchSessions();
+      showToast('New empty session created.');
+      return session;
+    } catch (err) {
+      showToast(err.message, 'error');
+      return null;
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ─── Load a saved session ─────────────────────────────────────────────────
@@ -199,6 +244,15 @@ export default function App() {
       showToast(err.message, 'error');
     } finally { setIsSaving(false); }
   };
+
+  // Persist changes shortly after the user stops editing the active session.
+  useEffect(() => {
+    if (!activeSessionId || !hasUnsavedChanges || isSaving) return undefined;
+    const timer = setTimeout(() => {
+      saveSession();
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [activeSessionId, hasUnsavedChanges, openingBalance, startDate, endDate, transactions, isSaving]);
 
   // ─── Save As (new session) ────────────────────────────────────────────────
 
@@ -274,8 +328,11 @@ export default function App() {
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (hasUnsavedChanges && activeSessionId) {
-      if (!window.confirm('Unsaved changes will be lost. Continue?')) {
+    let uploadSessionId = activeSessionId;
+    if (!uploadSessionId) {
+      const newSession = await handleNewSession();
+      uploadSessionId = newSession?.id;
+      if (!uploadSessionId) {
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
@@ -288,10 +345,10 @@ export default function App() {
       if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Upload failed'); }
       const data = await res.json();
       applyData(data);
-      setActiveSessionId(null);
-      setActiveSessionName(data.filename || file.name.replace(/\.[^.]+$/, ''));
+      setActiveSessionId(uploadSessionId);
+      setActiveSessionName(prev => prev || data.filename || file.name.replace(/\.[^.]+$/, ''));
       setHasUnsavedChanges(true);
-      showToast(`"${file.name}" uploaded (${data.transactions.length} rows). Save it as a session to keep your work!`);
+      showToast(`"${file.name}" uploaded (${data.transactions.length} rows). Saving automatically…`);
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
     } finally {
@@ -462,6 +519,12 @@ export default function App() {
           <div className="flex items-center gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.xlsm" className="hidden" />
             <button
+              onClick={handleNewSession}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition"
+            >
+              <FilePlus2 className="w-3.5 h-3.5" /> New Session
+            </button>
+            <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition"
             >
@@ -504,9 +567,9 @@ export default function App() {
                 <span className="text-sm font-bold text-slate-800">Session History</span>
               </div>
               <button
-                onClick={() => { setSaveAsName(`Petty Cash ${startDate} – ${endDate}`); setIsSaveAsModalOpen(true); }}
+                onClick={handleNewSession}
                 className="p-1 rounded-lg hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition"
-                title="Save current state as new session"
+                title="Create new empty session"
               >
                 <FilePlus2 className="w-4 h-4" />
               </button>
@@ -1153,16 +1216,16 @@ export default function App() {
             <div className="mt-4 space-y-3 text-xs">
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Opening Balance (₹)</label>
-                <input type="number" step="0.01" value={openingBalance} onChange={e => setOpeningBalance(parseFloat(e.target.value) || 0)} className="w-full border border-slate-300 rounded-lg p-2 font-mono font-bold" />
+                <input type="number" step="0.01" value={openingBalance} onChange={e => { setOpeningBalance(parseFloat(e.target.value) || 0); setHasUnsavedChanges(true); }} className="w-full border border-slate-300 rounded-lg p-2 font-mono font-bold" />
                 <p className="text-[11px] text-slate-400 mt-0.5">Negative = prior liability/overdraw.</p>
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Start Date String</label>
-                <input type="text" value={startDate} onChange={e => setStartDate(e.target.value)} placeholder="e.g. 01-10-2026" className="w-full border border-slate-300 rounded-lg p-2" />
+                <input type="text" value={startDate} onChange={e => { setStartDate(e.target.value); setHasUnsavedChanges(true); }} placeholder="e.g. 01-10-2026" className="w-full border border-slate-300 rounded-lg p-2" />
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">End Date String</label>
-                <input type="text" value={endDate} onChange={e => setEndDate(e.target.value)} placeholder="e.g. 06.11.2026" className="w-full border border-slate-300 rounded-lg p-2" />
+                <input type="text" value={endDate} onChange={e => { setEndDate(e.target.value); setHasUnsavedChanges(true); }} placeholder="e.g. 06.11.2026" className="w-full border border-slate-300 rounded-lg p-2" />
               </div>
             </div>
             <div className="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
