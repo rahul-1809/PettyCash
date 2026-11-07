@@ -50,6 +50,8 @@ const formatFullDate = (isoStr) => {
   });
 };
 
+const CUSTOM_PROJECT_VALUE = '__custom_project__';
+
 const readAttachment = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve({
@@ -111,10 +113,12 @@ export default function App() {
     project: '', status: 'NA', supportings: [], notes: '',
   };
   const [txForm, setTxForm] = useState(initialTxForm);
+  const [isCustomProject, setIsCustomProject] = useState(false);
+  const [isCustomEditProject, setIsCustomEditProject] = useState(false);
   const projectOptions = useMemo(() => Array.from(new Set([
     ...transactions.map(t => t.project).filter(Boolean),
     txForm.project,
-  ])).sort(), [transactions, txForm.project]);
+  ].filter(Boolean))).sort(), [transactions, txForm.project]);
 
   // ─── Toast ────────────────────────────────────────────────────────────────
 
@@ -759,7 +763,7 @@ export default function App() {
               ))}
             </div>
             {activeTab === 'transactions' && (
-              <button onClick={() => { setTxForm(initialTxForm); setIsAddModalOpen(true); }}
+              <button onClick={() => { setTxForm(initialTxForm); setIsCustomProject(false); setIsAddModalOpen(true); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold rounded-lg shadow-sm transition">
                 <Plus className="w-4 h-4" /> Add Transaction
               </button>
@@ -833,7 +837,7 @@ export default function App() {
                         <td className="py-2 px-3 border border-slate-200 text-slate-600 max-w-xs truncate" title={tx.notes}>{tx.notes || '—'}</td>
                         <td className="py-2 px-3 border border-slate-200 text-center">
                           <div className="flex items-center justify-center gap-1.5">
-                            <button onClick={() => { setCurrentEditTx({ ...tx, date: formatDateDisplay(tx.date) }); setIsEditModalOpen(true); }} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => { setCurrentEditTx({ ...tx, date: formatDateDisplay(tx.date) }); setIsCustomEditProject(false); setIsEditModalOpen(true); }} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
                             <button onClick={() => handleDeleteTransaction(tx.id)} className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
@@ -1192,10 +1196,17 @@ export default function App() {
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Project / Account</label>
-                <select value={txForm.project} onChange={e => setTxForm({ ...txForm, project: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-amber-500 focus:outline-none">
-                  <option value="">Select project</option>
+                <select value={isCustomProject ? CUSTOM_PROJECT_VALUE : (txForm.project || (projectOptions[0] || CUSTOM_PROJECT_VALUE))} onChange={e => {
+                  const value = e.target.value;
+                  setIsCustomProject(value === CUSTOM_PROJECT_VALUE);
+                  if (value !== CUSTOM_PROJECT_VALUE) setTxForm({ ...txForm, project: value });
+                }} className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-amber-500 focus:outline-none">
                   {projectOptions.map(project => <option key={project} value={project}>{project}</option>)}
+                  <option value={CUSTOM_PROJECT_VALUE}>Other (enter custom project)</option>
                 </select>
+                {(isCustomProject || (!projectOptions.length && !txForm.project)) && (
+                  <input type="text" value={txForm.project} onChange={e => setTxForm({ ...txForm, project: e.target.value })} placeholder="Enter project name" autoFocus className="w-full mt-2 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+                )}
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Status</label>
@@ -1264,10 +1275,17 @@ export default function App() {
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Project / Account</label>
-                <select value={currentEditTx.project || ''} onChange={e => setCurrentEditTx({ ...currentEditTx, project: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2">
-                  <option value="">Select project</option>
+                <select value={isCustomEditProject ? CUSTOM_PROJECT_VALUE : (currentEditTx.project || projectOptions[0] || '')} onChange={e => {
+                  const value = e.target.value;
+                  setIsCustomEditProject(value === CUSTOM_PROJECT_VALUE);
+                  if (value !== CUSTOM_PROJECT_VALUE) setCurrentEditTx({ ...currentEditTx, project: value });
+                }} className="w-full border border-slate-300 rounded-lg p-2">
                   {projectOptions.map(project => <option key={project} value={project}>{project}</option>)}
+                  <option value={CUSTOM_PROJECT_VALUE}>Other (enter custom project)</option>
                 </select>
+                {isCustomEditProject && (
+                  <input type="text" value={currentEditTx.project || ''} onChange={e => setCurrentEditTx({ ...currentEditTx, project: e.target.value })} placeholder="Enter project name" autoFocus className="w-full mt-2 border border-slate-300 rounded-lg p-2" />
+                )}
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Status</label>
