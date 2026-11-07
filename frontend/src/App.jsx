@@ -118,7 +118,8 @@ export default function App() {
   const projectOptions = useMemo(() => Array.from(new Set([
     ...transactions.map(t => t.project).filter(Boolean),
     txForm.project,
-  ].filter(Boolean))).sort(), [transactions, txForm.project]);
+    currentEditTx?.project,
+  ].filter(Boolean))).sort(), [transactions, txForm.project, currentEditTx?.project]);
 
   // ─── Toast ────────────────────────────────────────────────────────────────
 
@@ -1283,7 +1284,7 @@ export default function App() {
                   {projectOptions.map(project => <option key={project} value={project}>{project}</option>)}
                   <option value={CUSTOM_PROJECT_VALUE}>Other (enter custom project)</option>
                 </select>
-                {isCustomEditProject && (
+                {(isCustomEditProject || (!projectOptions.length && !currentEditTx.project)) && (
                   <input type="text" value={currentEditTx.project || ''} onChange={e => setCurrentEditTx({ ...currentEditTx, project: e.target.value })} placeholder="Enter project name" autoFocus className="w-full mt-2 border border-slate-300 rounded-lg p-2" />
                 )}
               </div>
