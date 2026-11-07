@@ -8,7 +8,7 @@
 
 1. **Excel Upload & Ingestion**:
    - Upload any petty cash `.xlsx` file.
-   - Pre-loads your existing sample file (`RTEAM -Petty Cash Sheet - 01.10.2026-06.11.2026.xlsx`) automatically on launch.
+   - Starts with empty sessions; upload an Excel workbook into the active session.
    - Auto-extracts opening balance, date periods, ledgers, and cost centers.
 
 2. **Interactive Spreadsheet & CRUD Management**:
@@ -93,6 +93,10 @@ is set and keeps SQLite as the local-development fallback.
 The `sessions` table is created automatically on the first startup. Do not
 commit the Supabase connection string to the repository. Supabase Free
 projects can pause after inactivity; their database contents remain stored.
+Each uploaded session stores both the parsed transactions/summary and the
+original workbook contents in Supabase. Existing sessions created before this
+feature contain their parsed data but cannot recover an original workbook that
+was never stored.
 
 ---
 

@@ -1,4 +1,5 @@
 import os
+import base64
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +63,8 @@ class SaveSessionRequest(BaseModel):
     start_date: str
     end_date: str
     transactions: List[TransactionItem]
+    source_excel_base64: Optional[str] = None
+    source_excel_filename: Optional[str] = None
 
 
 class RenameSessionRequest(BaseModel):
@@ -105,6 +108,8 @@ async def upload_excel(file: UploadFile = File(...)):
         data = parse_petty_cash_file(content)
         # Attach original filename to data so frontend can use it as default session name
         data["filename"] = file.filename
+        data["source_excel_base64"] = base64.b64encode(content).decode("ascii")
+        data["source_excel_filename"] = file.filename
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process uploaded file: {str(e)}")
@@ -155,6 +160,8 @@ def api_create_session(req: SaveSessionRequest):
             end_date=req.end_date,
             transactions=summary.get("transactions", tx_dicts),
             summary=summary,
+            source_excel_base64=req.source_excel_base64,
+            source_excel_filename=req.source_excel_filename,
         )
         # Return flattened structure (without nested data blob for list view)
         return {
@@ -211,6 +218,8 @@ def api_update_session(session_id: str, req: SaveSessionRequest):
             end_date=req.end_date,
             transactions=summary.get("transactions", tx_dicts),
             summary=summary,
+            source_excel_base64=req.source_excel_base64,
+            source_excel_filename=req.source_excel_filename,
             name=req.name,
         )
         return {

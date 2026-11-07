@@ -60,6 +60,8 @@ export default function App() {
   const [endDate, setEndDate] = useState('06.11.2026');
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [sourceExcelBase64, setSourceExcelBase64] = useState(null);
+  const [sourceExcelFilename, setSourceExcelFilename] = useState(null);
   const [activeTab, setActiveTab] = useState('transactions');
 
   // ── Session state
@@ -121,7 +123,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       await fetchSessions();
-      await loadDefaultData();
+      setLoading(false);
     })();
   }, []);
 
@@ -147,6 +149,8 @@ export default function App() {
     setEndDate(data.end_date ?? '');
     setTransactions(data.transactions ?? []);
     setSummary(data.summary ?? null);
+    setSourceExcelBase64(data.source_excel_base64 ?? null);
+    setSourceExcelFilename(data.source_excel_filename ?? data.filename ?? null);
   };
 
   const handleNewSession = async () => {
@@ -168,6 +172,8 @@ export default function App() {
           start_date: '',
           end_date: '',
           transactions: [],
+          source_excel_base64: null,
+          source_excel_filename: null,
         }),
       });
       if (!res.ok) throw new Error('Failed to create a new session');
@@ -234,6 +240,8 @@ export default function App() {
           start_date: startDate,
           end_date: endDate,
           transactions,
+          source_excel_base64: sourceExcelBase64,
+          source_excel_filename: sourceExcelFilename,
         }),
       });
       if (!res.ok) throw new Error('Save failed');
@@ -268,6 +276,8 @@ export default function App() {
           start_date: startDate,
           end_date: endDate,
           transactions,
+          source_excel_base64: sourceExcelBase64,
+          source_excel_filename: sourceExcelFilename,
         }),
       });
       if (!res.ok) throw new Error('Failed to save');
@@ -346,7 +356,7 @@ export default function App() {
       const data = await res.json();
       applyData(data);
       setActiveSessionId(uploadSessionId);
-      setActiveSessionName(prev => prev || data.filename || file.name.replace(/\.[^.]+$/, ''));
+      setActiveSessionName(data.filename || file.name.replace(/\.[^.]+$/, ''));
       setHasUnsavedChanges(true);
       showToast(`"${file.name}" uploaded (${data.transactions.length} rows). Saving automatically…`);
     } catch (err) {
@@ -573,18 +583,6 @@ export default function App() {
               >
                 <FilePlus2 className="w-4 h-4" />
               </button>
-            </div>
-
-            {/* Default sheet link */}
-            <div
-              onClick={() => { if (!hasUnsavedChanges || window.confirm('Unsaved changes. Continue?')) loadDefaultData(); }}
-              className={`flex items-center gap-2 px-4 py-2.5 cursor-pointer border-b border-slate-100 hover:bg-slate-50 transition ${!activeSessionId ? 'bg-amber-50 border-l-2 border-amber-500' : ''}`}
-            >
-              <FileSpreadsheet className="w-4 h-4 text-amber-500 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-slate-800 truncate">Sample Sheet (Default)</p>
-                <p className="text-[11px] text-slate-400">R-TEAM Oct–Nov 2026</p>
-              </div>
             </div>
 
             {/* Session list */}

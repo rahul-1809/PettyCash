@@ -17,9 +17,8 @@ ENV PYTHONUNBUFFERED=1
 COPY backend/requirements.txt ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# Copy backend code & default sample Excel
+# Copy backend code
 COPY backend/ ./backend/
-COPY *.xlsx ./
 
 # Copy compiled frontend from Stage 1
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

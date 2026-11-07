@@ -85,11 +85,18 @@ def create_session(
     end_date: str,
     transactions: list,
     summary: dict,
+    source_excel_base64: Optional[str] = None,
+    source_excel_filename: Optional[str] = None,
 ) -> dict:
     session_id = str(uuid.uuid4())
     ts = now_iso()
     tx_count = len(transactions)
-    data_blob = {"transactions": transactions, "summary": summary}
+    data_blob = {
+        "transactions": transactions,
+        "summary": summary,
+        "source_excel_base64": source_excel_base64,
+        "source_excel_filename": source_excel_filename,
+    }
     marker = _placeholder()
 
     with get_connection() as conn:
@@ -140,10 +147,17 @@ def update_session(
     transactions: list,
     summary: dict,
     name: Optional[str] = None,
+    source_excel_base64: Optional[str] = None,
+    source_excel_filename: Optional[str] = None,
 ) -> Optional[dict]:
     ts = now_iso()
     tx_count = len(transactions)
-    data_blob = {"transactions": transactions, "summary": summary}
+    data_blob = {
+        "transactions": transactions,
+        "summary": summary,
+        "source_excel_base64": source_excel_base64,
+        "source_excel_filename": source_excel_filename,
+    }
     marker = _placeholder()
     values = [
         ts,
