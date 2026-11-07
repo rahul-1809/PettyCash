@@ -148,26 +148,34 @@ def parse_petty_cash_file(file_path_or_bytes) -> Dict[str, Any]:
     header_row = 1
     found_headers = False
 
+    header_indexes = {}
     for r in range(1, min(tx_sheet.max_row + 1, 10)):
-        row_vals = [str(tx_sheet.cell(r, c).value or "").strip().lower() for c in range(1, 11)]
+        row_vals = [str(tx_sheet.cell(r, c).value or "").strip().lower() for c in range(1, tx_sheet.max_column + 1)]
         if any("date" in v for v in row_vals) and any("receipt" in v or "payment" in v for v in row_vals):
             header_row = r
             found_headers = True
+            header_indexes = {value: index + 1 for index, value in enumerate(row_vals) if value}
             break
 
     start_data_row = header_row + 1 if found_headers else 2
 
     for r in range(start_data_row, tx_sheet.max_row + 1):
-        d_val = tx_sheet.cell(r, 1).value
-        ledger = tx_sheet.cell(r, 2).value
-        memo = tx_sheet.cell(r, 3).value
-        receipt = parse_float(tx_sheet.cell(r, 4).value)
-        payment = parse_float(tx_sheet.cell(r, 5).value)
-        balance = parse_float(tx_sheet.cell(r, 6).value)
-        approved = tx_sheet.cell(r, 7).value
-        requested_by = tx_sheet.cell(r, 8).value
-        category = tx_sheet.cell(r, 9).value
-        project = tx_sheet.cell(r, 10).value
+        def cell_value(*names, default=None):
+            index = next((header_indexes[name] for name in names if name in header_indexes), None)
+            return tx_sheet.cell(r, index).value if index else default
+
+        d_val = cell_value("date", default=tx_sheet.cell(r, 1).value)
+        ledger = cell_value("ledger", default=tx_sheet.cell(r, 2).value)
+        memo = cell_value("memo / description", "memo", default=tx_sheet.cell(r, 3).value)
+        receipt = parse_float(cell_value("receipt", default=tx_sheet.cell(r, 4).value))
+        payment = parse_float(cell_value("payment", default=tx_sheet.cell(r, 5).value))
+        balance = parse_float(cell_value("ouststanding balance", "outstanding balance", default=tx_sheet.cell(r, 6).value))
+        approved = cell_value("approved", default=tx_sheet.cell(r, 7).value)
+        requested_by = cell_value("requested by", default=tx_sheet.cell(r, 8).value)
+        category = cell_value("category", default=tx_sheet.cell(r, 9).value)
+        project = cell_value("project", default=tx_sheet.cell(r, 10).value)
+        status = cell_value("status", default="NA") or "NA"
+        notes = cell_value("notes", default="")
 
         # Check if row is not empty
         if not d_val and not ledger and not memo and receipt == 0 and payment == 0:
@@ -187,6 +195,9 @@ def parse_petty_cash_file(file_path_or_bytes) -> Dict[str, Any]:
             "requested_by": str(requested_by or "").strip(),
             "category": str(category or "").strip(),
             "project": str(project or "").strip(),
+            "status": str(status).strip() if str(status).strip() in {"Paid", "Unpaid", "Progress", "NA"} else "NA",
+            "supportings": [],
+            "notes": str(notes or "").strip(),
         })
 
     # If opening balance was not explicitly found in summary, infer from row 1
@@ -335,7 +346,7 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
 
         # Clear existing rows in Petty Cash Sheet from row 2 onwards
         for r in range(2, max(ws_tx.max_row + 1, len(tx_list) + 2)):
-            for c in range(1, 11):
+            for c in range(1, 14):
                 cell = ws_tx.cell(r, c)
                 if type(cell).__name__ != "MergedCell":
                     cell.value = None
@@ -360,7 +371,8 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
     # -------------------------------------------------------------
     tx_headers = [
         "Date", "Ledger", "Memo / Description", "Receipt", "Payment",
-        "Oustanding Balance", "Approved", "Requested By", "Category", "Project"
+        "Oustanding Balance", "Approved", "Requested By", "Category", "Project",
+        "Status", "Supportings", "Notes"
     ]
     for c_idx, h_text in enumerate(tx_headers, start=1):
         cell = ws_tx.cell(1, c_idx, h_text)
@@ -386,8 +398,11 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
         ws_tx.cell(r_idx, 8, tx.get("requested_by", ""))
         ws_tx.cell(r_idx, 9, tx.get("category", ""))
         ws_tx.cell(r_idx, 10, tx.get("project", ""))
+        ws_tx.cell(r_idx, 11, tx.get("status", "NA"))
+        ws_tx.cell(r_idx, 12, ", ".join(item.get("name", "") for item in tx.get("supportings", [])))
+        ws_tx.cell(r_idx, 13, tx.get("notes", ""))
 
-        for col_idx in range(1, 11):
+        for col_idx in range(1, 14):
             cell = ws_tx.cell(r_idx, col_idx)
             cell.font = FONT_REGULAR
             cell.border = ALL_THIN_BORDER
@@ -403,7 +418,8 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
     # Set Column Widths for Petty Cash Sheet
     tx_col_widths = {
         "A": 12, "B": 20, "C": 50, "D": 14, "E": 14,
-        "F": 18, "G": 16, "H": 16, "I": 24, "J": 30
+        "F": 18, "G": 16, "H": 16, "I": 24, "J": 30,
+        "K": 14, "L": 30, "M": 40
     }
     for col_letter, width in tx_col_widths.items():
         ws_tx.column_dimensions[col_letter].width = width

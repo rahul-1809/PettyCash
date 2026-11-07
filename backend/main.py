@@ -5,7 +5,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 try:
     from backend.excel_service import parse_petty_cash_file, recalculate_summary, generate_styled_excel, generate_drilldown_excel
@@ -48,6 +48,9 @@ class TransactionItem(BaseModel):
     requested_by: Optional[str] = ""
     category: Optional[str] = ""
     project: Optional[str] = ""
+    status: Optional[str] = "NA"
+    supportings: List[dict] = Field(default_factory=list)
+    notes: Optional[str] = ""
 
 
 class RecalculateRequest(BaseModel):

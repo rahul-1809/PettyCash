@@ -50,6 +50,18 @@ const formatFullDate = (isoStr) => {
   });
 };
 
+const readAttachment = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve({
+    name: file.name,
+    type: file.type || 'application/octet-stream',
+    size: file.size,
+    data: String(reader.result).split(',')[1] || '',
+  });
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -96,9 +108,13 @@ export default function App() {
     date: new Date().toISOString().split('T')[0],
     ledger: 'Petty Cash', memo: '', receipt: 0, payment: 0,
     approved: 'Rajesh Sir', requested_by: 'Bhaskar', category: '',
-    project: 'Petty Cash - R Team Consulting',
+    project: '', status: 'NA', supportings: [], notes: '',
   };
   const [txForm, setTxForm] = useState(initialTxForm);
+  const projectOptions = useMemo(() => Array.from(new Set([
+    ...transactions.map(t => t.project).filter(Boolean),
+    txForm.project,
+  ])).sort(), [transactions, txForm.project]);
 
   // ─── Toast ────────────────────────────────────────────────────────────────
 
@@ -458,6 +474,22 @@ export default function App() {
     showToast('Transaction added!');
   };
 
+  const handleSupportingUpload = async (event, update) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    try {
+      const attachments = await Promise.all(files.map(readAttachment));
+      update(previous => ({
+        ...previous,
+        supportings: [...(previous.supportings || []), ...attachments],
+      }));
+    } catch (err) {
+      showToast(`Supporting upload failed: ${err.message}`, 'error');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   const handleUpdateTransaction = () => {
     if (!currentEditTx) return;
     const updated = transactions.map(t =>
@@ -479,12 +511,23 @@ export default function App() {
 
   const uniqueProjects = useMemo(() => Array.from(new Set(transactions.map(t => t.project).filter(Boolean))).sort(), [transactions]);
   const uniqueLedgers = useMemo(() => Array.from(new Set(transactions.map(t => t.ledger).filter(Boolean))).sort(), [transactions]);
+  const sortedTransactions = useMemo(() => [...transactions].sort((a, b) => {
+    const normalizeDate = value => {
+      const text = String(value || '').split('T')[0].replace(/\./g, '-').replace(/\//g, '-');
+      const parts = text.split('-');
+      if (parts.length === 3 && parts[0].length === 2) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+      return text || '9999-12-31';
+    };
+    const dateA = new Date(normalizeDate(a.date)).getTime();
+    const dateB = new Date(normalizeDate(b.date)).getTime();
+    return dateA - dateB;
+  }), [transactions]);
 
-  const filteredTransactions = useMemo(() => transactions.filter(t => {
+  const filteredTransactions = useMemo(() => sortedTransactions.filter(t => {
     const q = searchTerm.toLowerCase();
     const matchSearch = !q || [t.memo, t.ledger, t.project, t.category, t.requested_by, t.approved].some(f => f && f.toLowerCase().includes(q));
     return matchSearch && (selectedProject === 'ALL' || t.project === selectedProject) && (selectedLedger === 'ALL' || t.ledger === selectedLedger);
-  }), [transactions, searchTerm, selectedProject, selectedLedger]);
+  }), [sortedTransactions, searchTerm, selectedProject, selectedLedger]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -759,14 +802,14 @@ export default function App() {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-[#FFFF00] text-slate-900 uppercase font-bold sticky top-0 z-10 shadow-sm border-b-2 border-slate-400">
                     <tr>
-                      {['Date', 'Ledger', 'Memo / Description', 'Receipt', 'Payment', 'Outstanding Balance', 'Approved', 'Requested By', 'Category', 'Project', 'Actions'].map(h => (
+                      {['Date', 'Ledger', 'Memo / Description', 'Receipt', 'Payment', 'Outstanding Balance', 'Approved', 'Requested By', 'Category', 'Project', 'Status', 'Supportings', 'Notes', 'Actions'].map(h => (
                         <th key={h} className="py-2.5 px-3 border border-slate-300">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredTransactions.length === 0 ? (
-                      <tr><td colSpan={11} className="py-12 text-center text-slate-400">No transactions match filters.</td></tr>
+                      <tr><td colSpan={14} className="py-12 text-center text-slate-400">No transactions match filters.</td></tr>
                     ) : filteredTransactions.map((tx, idx) => (
                       <tr key={tx.id || idx} className="hover:bg-amber-50/40 transition">
                         <td className="py-2 px-3 border border-slate-200 text-center font-mono font-medium text-slate-700">{formatDateDisplay(tx.date)}</td>
@@ -779,6 +822,15 @@ export default function App() {
                         <td className="py-2 px-3 border border-slate-200 text-slate-700">{tx.requested_by || '—'}</td>
                         <td className="py-2 px-3 border border-slate-200 text-slate-600 text-[11px] truncate" title={tx.category}>{tx.category || '—'}</td>
                         <td className="py-2 px-3 border border-slate-200 text-slate-800 font-medium text-[11px] truncate" title={tx.project}>{tx.project || '—'}</td>
+                        <td className="py-2 px-3 border border-slate-200 text-slate-700 whitespace-nowrap">{tx.status || 'NA'}</td>
+                        <td className="py-2 px-3 border border-slate-200 text-slate-700">
+                          {(tx.supportings || []).length
+                            ? tx.supportings.map(file => (
+                              <a key={`${file.name}-${file.size}`} href={`data:${file.type};base64,${file.data}`} download={file.name} className="block text-blue-600 hover:underline truncate max-w-xs">{file.name}</a>
+                            ))
+                            : '—'}
+                        </td>
+                        <td className="py-2 px-3 border border-slate-200 text-slate-600 max-w-xs truncate" title={tx.notes}>{tx.notes || '—'}</td>
                         <td className="py-2 px-3 border border-slate-200 text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             <button onClick={() => { setCurrentEditTx({ ...tx, date: formatDateDisplay(tx.date) }); setIsEditModalOpen(true); }} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
@@ -1017,7 +1069,7 @@ export default function App() {
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-[#FFFF00] text-slate-900 uppercase font-bold sticky top-0 z-10 shadow-sm border-b-2 border-slate-400">
                   <tr>
-                    {['Date', 'Ledger', 'Memo / Description', 'Receipt', 'Payment', 'Outstanding Balance', 'Approved', 'Requested By', 'Category', 'Project'].map(h => (
+                    {['Date', 'Ledger', 'Memo / Description', 'Receipt', 'Payment', 'Outstanding Balance', 'Approved', 'Requested By', 'Category', 'Project', 'Status', 'Supportings', 'Notes'].map(h => (
                       <th key={h} className="py-2.5 px-3 border border-slate-300">{h}</th>
                     ))}
                   </tr>
@@ -1035,6 +1087,9 @@ export default function App() {
                       <td className="py-2 px-3 border border-slate-200 text-slate-600">{tx.requested_by || '—'}</td>
                       <td className="py-2 px-3 border border-slate-200 text-slate-600 text-[11px] truncate" title={tx.category}>{tx.category || '—'}</td>
                       <td className="py-2 px-3 border border-slate-200 text-slate-800 font-medium text-[11px] truncate" title={tx.project}>{tx.project || '—'}</td>
+                      <td className="py-2 px-3 border border-slate-200 text-slate-600">{tx.status || 'NA'}</td>
+                      <td className="py-2 px-3 border border-slate-200 text-slate-600">{(tx.supportings || []).map(file => file.name).join(', ') || '—'}</td>
+                      <td className="py-2 px-3 border border-slate-200 text-slate-600">{tx.notes || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1137,8 +1192,25 @@ export default function App() {
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Project / Account</label>
-                <input type="text" list="project-list" value={txForm.project} onChange={e => setTxForm({ ...txForm, project: e.target.value })} placeholder="e.g. ROffice - Expenses" className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
-                <datalist id="project-list">{uniqueProjects.map(p => <option key={p} value={p} />)}</datalist>
+                <select value={txForm.project} onChange={e => setTxForm({ ...txForm, project: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-amber-500 focus:outline-none">
+                  <option value="">Select project</option>
+                  {projectOptions.map(project => <option key={project} value={project}>{project}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-600 font-medium mb-1">Status</label>
+                <select value={txForm.status} onChange={e => setTxForm({ ...txForm, status: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2">
+                  {['Paid', 'Unpaid', 'Progress', 'NA'].map(status => <option key={status}>{status}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-600 font-medium mb-1">Supportings</label>
+                <input type="file" multiple onChange={e => handleSupportingUpload(e, setTxForm)} accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="w-full text-xs" />
+                <p className="text-[11px] text-slate-400 mt-1">{(txForm.supportings || []).map(file => file.name).join(', ') || 'No files selected'}</p>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-slate-600 font-medium mb-1">Notes (optional)</label>
+                <textarea rows={2} value={txForm.notes} onChange={e => setTxForm({ ...txForm, notes: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2" />
               </div>
             </div>
             <div className="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
@@ -1192,7 +1264,25 @@ export default function App() {
               </div>
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Project / Account</label>
-                <input type="text" value={currentEditTx.project || ''} onChange={e => setCurrentEditTx({ ...currentEditTx, project: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2" />
+                <select value={currentEditTx.project || ''} onChange={e => setCurrentEditTx({ ...currentEditTx, project: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2">
+                  <option value="">Select project</option>
+                  {projectOptions.map(project => <option key={project} value={project}>{project}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-600 font-medium mb-1">Status</label>
+                <select value={currentEditTx.status || 'NA'} onChange={e => setCurrentEditTx({ ...currentEditTx, status: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2">
+                  {['Paid', 'Unpaid', 'Progress', 'NA'].map(status => <option key={status}>{status}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-600 font-medium mb-1">Supportings</label>
+                <input type="file" multiple onChange={e => handleSupportingUpload(e, setCurrentEditTx)} accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="w-full text-xs" />
+                <p className="text-[11px] text-slate-400 mt-1">{(currentEditTx.supportings || []).map(file => file.name).join(', ') || 'No files selected'}</p>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-slate-600 font-medium mb-1">Notes (optional)</label>
+                <textarea rows={2} value={currentEditTx.notes || ''} onChange={e => setCurrentEditTx({ ...currentEditTx, notes: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2" />
               </div>
             </div>
             <div className="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
