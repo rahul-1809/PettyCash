@@ -73,6 +73,7 @@ export default function App() {
   const [startDate, setStartDate] = useState('01-10-2026');
   const [endDate, setEndDate] = useState('06.11.2026');
   const [transactions, setTransactions] = useState([]);
+  const [globalProjects, setGlobalProjects] = useState([]);
   const [summary, setSummary] = useState(null);
   const [sourceExcelBase64, setSourceExcelBase64] = useState(null);
   const [sourceExcelFilename, setSourceExcelFilename] = useState(null);
@@ -116,10 +117,11 @@ export default function App() {
   const [isCustomProject, setIsCustomProject] = useState(false);
   const [isCustomEditProject, setIsCustomEditProject] = useState(false);
   const projectOptions = useMemo(() => Array.from(new Set([
+    ...globalProjects,
     ...transactions.map(t => t.project).filter(Boolean),
     txForm.project,
     currentEditTx?.project,
-  ].filter(Boolean))).sort(), [transactions, txForm.project, currentEditTx?.project]);
+  ].filter(Boolean))).sort(), [globalProjects, transactions, txForm.project, currentEditTx?.project]);
 
   // ─── Toast ────────────────────────────────────────────────────────────────
 
@@ -139,11 +141,38 @@ export default function App() {
     finally { setSessionsLoading(false); }
   }, []);
 
+  const fetchProjectCategories = useCallback(async () => {
+    try {
+      const res = await fetch('/api/project-categories');
+      if (!res.ok) throw new Error('Failed to load project categories');
+      setGlobalProjects(await res.json());
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }, []);
+
+  const addGlobalProject = async (name) => {
+    const project = name.trim();
+    if (!project) return;
+    try {
+      const res = await fetch('/api/project-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: project }),
+      });
+      if (!res.ok) throw new Error('Failed to save project category');
+      setGlobalProjects(previous => Array.from(new Set([...previous, project])).sort());
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
   // ─── Boot: load default data + sessions list ───────────────────────────────
 
   useEffect(() => {
     (async () => {
       await fetchSessions();
+      await fetchProjectCategories();
       setLoading(false);
     })();
   }, []);
@@ -470,9 +499,10 @@ export default function App() {
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
-  const handleAddTransaction = () => {
+  const handleAddTransaction = async () => {
     const newTx = { ...txForm, id: `tx-${Date.now()}`, receipt: Number(txForm.receipt) || 0, payment: Number(txForm.payment) || 0 };
     const updated = [...transactions, newTx];
+    await addGlobalProject(newTx.project);
     triggerRecalculate(openingBalance, startDate, endDate, updated);
     setIsAddModalOpen(false);
     setTxForm(initialTxForm);
@@ -495,11 +525,12 @@ export default function App() {
     }
   };
 
-  const handleUpdateTransaction = () => {
+  const handleUpdateTransaction = async () => {
     if (!currentEditTx) return;
     const updated = transactions.map(t =>
       t.id === currentEditTx.id ? { ...currentEditTx, receipt: Number(currentEditTx.receipt) || 0, payment: Number(currentEditTx.payment) || 0 } : t
     );
+    await addGlobalProject(currentEditTx.project || '');
     triggerRecalculate(openingBalance, startDate, endDate, updated);
     setIsEditModalOpen(false);
     setCurrentEditTx(null);
@@ -514,7 +545,10 @@ export default function App() {
 
   // ─── Derived ──────────────────────────────────────────────────────────────
 
-  const uniqueProjects = useMemo(() => Array.from(new Set(transactions.map(t => t.project).filter(Boolean))).sort(), [transactions]);
+  const uniqueProjects = useMemo(() => Array.from(new Set([
+    ...globalProjects,
+    ...transactions.map(t => t.project).filter(Boolean),
+  ])).sort(), [globalProjects, transactions]);
   const uniqueLedgers = useMemo(() => Array.from(new Set(transactions.map(t => t.ledger).filter(Boolean))).sort(), [transactions]);
   const sortedTransactions = useMemo(() => [...transactions].sort((a, b) => {
     const normalizeDate = value => {

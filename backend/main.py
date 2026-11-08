@@ -9,10 +9,18 @@ from pydantic import BaseModel, Field
 
 try:
     from backend.excel_service import parse_petty_cash_file, recalculate_summary, generate_styled_excel, generate_drilldown_excel
-    from backend.database import init_db, list_sessions, create_session, get_session, update_session, rename_session, delete_session
+    from backend.database import (
+        init_db, list_sessions, create_session, get_session, update_session,
+        rename_session, delete_session, list_project_categories,
+        add_project_category, add_project_categories,
+    )
 except ImportError:
     from excel_service import parse_petty_cash_file, recalculate_summary, generate_styled_excel, generate_drilldown_excel
-    from database import init_db, list_sessions, create_session, get_session, update_session, rename_session, delete_session
+    from database import (
+        init_db, list_sessions, create_session, get_session, update_session,
+        rename_session, delete_session, list_project_categories,
+        add_project_category, add_project_categories,
+    )
 
 app = FastAPI(title="Petty Cash Management API")
 
@@ -143,11 +151,29 @@ def api_list_sessions():
     return list_sessions()
 
 
+@app.get("/api/project-categories")
+def api_list_project_categories():
+    return list_project_categories()
+
+
+class ProjectCategoryRequest(BaseModel):
+    name: str
+
+
+@app.post("/api/project-categories")
+def api_add_project_category(req: ProjectCategoryRequest):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name cannot be empty.")
+    return {"name": add_project_category(name)}
+
+
 @app.post("/api/sessions")
 def api_create_session(req: SaveSessionRequest):
     """Create a new saved session from current state."""
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
+        add_project_categories([tx.get("project", "") for tx in tx_dicts])
         # Compute fresh summary before saving
         summary = recalculate_summary(
             opening_balance=req.opening_balance,
@@ -208,6 +234,7 @@ def api_update_session(session_id: str, req: SaveSessionRequest):
         raise HTTPException(status_code=404, detail="Session not found.")
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
+        add_project_categories([tx.get("project", "") for tx in tx_dicts])
         summary = recalculate_summary(
             opening_balance=req.opening_balance,
             start_date=req.start_date,

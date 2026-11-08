@@ -43,7 +43,7 @@ def _placeholder() -> str:
 
 
 def init_db():
-    """Create the sessions table in the configured database."""
+    """Create persistence tables and seed global projects from existing sessions."""
     data_type = "JSONB" if DATABASE_URL else "TEXT"
     with get_connection() as conn:
         conn.execute(
@@ -61,7 +61,76 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_categories (
+                name       TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
+    _seed_project_categories()
+
+
+def _seed_project_categories():
+    with get_connection() as conn:
+        rows = conn.execute("SELECT data FROM sessions").fetchall()
+        existing = {
+            row["name"] for row in conn.execute(
+                "SELECT name FROM project_categories"
+            ).fetchall()
+        }
+        projects = set(existing)
+        for row in rows:
+            data = row["data"]
+            if isinstance(data, str):
+                data = json.loads(data)
+            for transaction in data.get("transactions", []):
+                project = str(transaction.get("project") or "").strip()
+                if project:
+                    projects.add(project)
+        for project in projects - existing:
+            marker = _placeholder()
+            conn.execute(
+                f"INSERT INTO project_categories (name, created_at) "
+                f"VALUES ({marker}, {marker})",
+                (project, now_iso()),
+            )
+        conn.commit()
+
+
+def list_project_categories() -> List[str]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT name FROM project_categories ORDER BY name"
+        ).fetchall()
+        return [row["name"] for row in rows]
+
+
+def add_project_category(name: str) -> str:
+    project = name.strip()
+    if not project:
+        return ""
+    marker = _placeholder()
+    with get_connection() as conn:
+        existing = conn.execute(
+            f"SELECT name FROM project_categories WHERE name={marker}",
+            (project,),
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                f"INSERT INTO project_categories (name, created_at) "
+                f"VALUES ({marker}, {marker})",
+                (project, now_iso()),
+            )
+            conn.commit()
+    return project
+
+
+def add_project_categories(names: List[str]):
+    for name in names:
+        add_project_category(name)
 
 
 def now_iso() -> str:
