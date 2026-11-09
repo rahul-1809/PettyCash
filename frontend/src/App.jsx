@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Upload, Download, Plus, Trash2, Edit2, Search,
-  FileSpreadsheet, Calendar, DollarSign, TrendingUp,
+  FileSpreadsheet, Calendar, IndianRupee, TrendingUp,
   TrendingDown, PieChart, Table, CheckCircle2, AlertCircle,
   X, ExternalLink, Eye, FileDown, History, Save, FolderOpen,
   Clock, ChevronRight, ChevronLeft, Pencil, RefreshCw, FilePlus2
@@ -774,7 +774,7 @@ export default function App() {
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-1 bg-gradient-to-br from-white to-blue-50/50">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Closing Balance</span>
-                <DollarSign className="w-4 h-4 text-blue-600" />
+                <IndianRupee className="w-4 h-4 text-blue-600" />
               </div>
               <span className={`text-xl font-bold ${(summary?.closing_balance ?? 0) < 0 ? 'text-red-600' : 'text-blue-700'}`}>{formatCurrency(summary?.closing_balance ?? 0)}</span>
               <span className="text-xs text-slate-400 flex items-center gap-1"><Calendar className="w-3 h-3" /> {endDate}</span>
