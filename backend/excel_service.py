@@ -1,10 +1,12 @@
 import io
 import os
+import re
 import datetime
 from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.hyperlink import Hyperlink
 import openpyxl.utils.datetime as opydt
 
 # Common style constants matching the reference template
@@ -438,6 +440,111 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
 
     pivot_rows = summary_data["pivot_rows"]
     curr_pivot_row = 4
+    drilldown_sheets = {}
+
+    def add_drilldown_link(cell, project: str, tx_type: str):
+        sheet = drilldown_sheets.get((project, tx_type))
+        if sheet:
+            cell.hyperlink = Hyperlink(
+                ref=cell.coordinate,
+                location=f"'{sheet.title}'!A1",
+            )
+
+    def create_drilldown_sheet(project: str, tx_type: str):
+        key = (project, tx_type)
+        if key in drilldown_sheets:
+            return drilldown_sheets[key]
+
+        rows = [
+            tx for tx in tx_list
+            if (project == "Grand Total" or (tx.get("project", "").strip() or "Unassigned") == project)
+            and (float(tx.get(tx_type, 0) or 0) > 0)
+        ]
+        suffix = "Receipts" if tx_type == "receipt" else "Payments"
+        base_title = re.sub(r"[:\\/?*\[\]]", "-", f"Details - {project[:18]} - {suffix}")
+        title = base_title[:31]
+        existing_titles = {sheet.title for sheet in wb.worksheets}
+        counter = 2
+        while title in existing_titles:
+            suffix_number = f" ({counter})"
+            title = f"{base_title[:31 - len(suffix_number)]}{suffix_number}"
+            counter += 1
+
+        sheet = wb.create_sheet(title=title)
+        sheet.views.sheetView[0].showGridLines = True
+        sheet.merge_cells("A1:J1")
+        title_cell = sheet.cell(1, 1, f"Background Transactions: {project} ({tx_type.upper()})")
+        title_cell.font = FONT_TITLE_WHITE
+        title_cell.fill = HEADER_BLUE_FILL
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        headers = [
+            "Date", "Ledger", "Memo / Description", "Receipt", "Payment",
+            "Oustanding Balance", "Approved", "Requested By", "Category", "Project"
+        ]
+        for col_idx, header in enumerate(headers, start=1):
+            header_cell = sheet.cell(2, col_idx, header)
+            header_cell.font = FONT_HEADER
+            header_cell.fill = YELLOW_FILL
+            header_cell.border = ALL_THIN_BORDER
+
+        for row_idx, tx in enumerate(rows, start=3):
+            values = [
+                parse_date_for_excel(tx.get("date", "")),
+                tx.get("ledger", ""),
+                tx.get("memo", ""),
+                tx.get("receipt") or None,
+                tx.get("payment") or None,
+                tx.get("balance", 0.0),
+                tx.get("approved", ""),
+                tx.get("requested_by", ""),
+                tx.get("category", ""),
+                tx.get("project", ""),
+            ]
+            for col_idx, value in enumerate(values, start=1):
+                detail_cell = sheet.cell(row_idx, col_idx, value)
+                detail_cell.font = FONT_REGULAR
+                detail_cell.border = ALL_THIN_BORDER
+                if col_idx == 1:
+                    detail_cell.number_format = "yyyy-mm-dd"
+                elif col_idx in [4, 5, 6]:
+                    detail_cell.number_format = "#,##0.00"
+
+        total_row = len(rows) + 3
+        sheet.cell(total_row, 1, "Total").font = FONT_BOLD
+        sheet.cell(total_row, 1).border = ALL_THIN_BORDER
+        for col_idx in range(2, 4):
+            sheet.cell(total_row, col_idx).border = ALL_THIN_BORDER
+        for col_idx, field in ((4, "receipt"), (5, "payment")):
+            total_cell = sheet.cell(
+                total_row,
+                col_idx,
+                sum(float(tx.get(field, 0) or 0) for tx in rows) or "",
+            )
+            total_cell.font = FONT_BOLD
+            total_cell.border = ALL_THIN_BORDER
+            total_cell.number_format = "#,##0.00"
+        for col_idx in range(6, 11):
+            sheet.cell(total_row, col_idx).border = ALL_THIN_BORDER
+
+        for col_letter, width in {
+            "A": 14, "B": 20, "C": 48, "D": 16, "E": 16,
+            "F": 18, "G": 16, "H": 16, "I": 24, "J": 28,
+        }.items():
+            sheet.column_dimensions[col_letter].width = width
+
+        drilldown_sheets[key] = sheet
+        return sheet
+
+    for prow in pivot_rows:
+        project = prow["project"]
+        if prow["sum_receipt"]:
+            create_drilldown_sheet(project, "receipt")
+        if prow["sum_payment"]:
+            create_drilldown_sheet(project, "payment")
+    create_drilldown_sheet("Grand Total", "receipt")
+    create_drilldown_sheet("Grand Total", "payment")
+
     for prow in pivot_rows:
         ws_summary.cell(curr_pivot_row, 1, prow["project"]).font = FONT_REGULAR
         ws_summary.cell(curr_pivot_row, 1).border = ALL_THIN_BORDER
@@ -446,11 +553,15 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
         c_rec.font = FONT_REGULAR
         c_rec.border = ALL_THIN_BORDER
         c_rec.number_format = "#,##0.00"
+        if prow["sum_receipt"]:
+            add_drilldown_link(c_rec, prow["project"], "receipt")
 
         c_pay = ws_summary.cell(curr_pivot_row, 3, prow["sum_payment"])
         c_pay.font = FONT_REGULAR
         c_pay.border = ALL_THIN_BORDER
         c_pay.number_format = "#,##0.00"
+        if prow["sum_payment"]:
+            add_drilldown_link(c_pay, prow["project"], "payment")
 
         curr_pivot_row += 1
 
@@ -462,11 +573,13 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
     tot_rec_cell.font = FONT_BOLD
     tot_rec_cell.border = ALL_THIN_BORDER
     tot_rec_cell.number_format = "#,##0.00"
+    add_drilldown_link(tot_rec_cell, "Grand Total", "receipt")
 
     tot_pay_cell = ws_summary.cell(curr_pivot_row, 3, f"=SUM(C4:C{curr_pivot_row - 1})")
     tot_pay_cell.font = FONT_BOLD
     tot_pay_cell.border = ALL_THIN_BORDER
     tot_pay_cell.number_format = "#,##0.00"
+    add_drilldown_link(tot_pay_cell, "Grand Total", "payment")
 
     # If native pivot exists in template, update cache range and refresh flag
     if use_template and ws_summary._pivots:
@@ -543,6 +656,7 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
         amt_c.font = FONT_REGULAR
         amt_c.border = ALL_THIN_BORDER
         amt_c.number_format = "#,##0.00"
+        add_drilldown_link(amt_c, item["project"], "receipt")
 
         ws_summary.cell(curr_add_row, 11, "").border = ALL_THIN_BORDER
         curr_add_row += 1
@@ -552,6 +666,7 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
     add_sum_cell.font = FONT_BOLD
     add_sum_cell.border = ALL_THIN_BORDER
     add_sum_cell.number_format = "#,##0.00"
+    add_drilldown_link(add_sum_cell, "Grand Total", "receipt")
 
     # Withdraw Header Row
     withdraw_hdr_row = curr_add_row
@@ -572,6 +687,7 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
         amt_c.font = FONT_REGULAR
         amt_c.border = ALL_THIN_BORDER
         amt_c.number_format = "#,##0.00"
+        add_drilldown_link(amt_c, item["project"], "payment")
 
         ws_summary.cell(curr_w_row, 11, "").border = ALL_THIN_BORDER
         curr_w_row += 1
@@ -581,6 +697,7 @@ def generate_styled_excel(opening_balance: float, start_date: str, end_date: str
     w_sum_cell.font = FONT_BOLD
     w_sum_cell.border = ALL_THIN_BORDER
     w_sum_cell.number_format = "#,##0.00"
+    add_drilldown_link(w_sum_cell, "Grand Total", "payment")
 
     # Spacer rows before closing balance
     spacer_row = curr_w_row
