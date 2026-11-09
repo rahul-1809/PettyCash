@@ -583,7 +583,7 @@ export default function App() {
 
       {/* Top Nav */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-        <div className="px-4 h-14 flex items-center justify-between gap-3">
+        <div className="app-header-inner px-4 min-h-14 py-2 flex items-center justify-between gap-3">
           {/* Left: logo + sidebar toggle */}
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(o => !o)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition" title="Toggle Sessions Panel">
@@ -592,13 +592,13 @@ export default function App() {
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 flex items-center justify-center shadow-md shadow-amber-500/20">
               <FileSpreadsheet className="w-5 h-5 text-white" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
                 PettyCash Pro
                 <span className="text-xs bg-amber-100 text-amber-800 font-semibold px-2 py-0.5 rounded-full border border-amber-300">R-TEAM Edition</span>
               </h1>
               {activeSessionName && (
-                <p className="text-xs text-slate-500 flex items-center gap-1">
+                <p className="text-xs text-slate-500 flex items-center gap-1 truncate">
                   <FolderOpen className="w-3 h-3" />
                   {activeSessionName}
                   {hasUnsavedChanges && <span className="text-amber-600 font-semibold">• unsaved</span>}
@@ -608,7 +608,7 @@ export default function App() {
           </div>
 
           {/* Right: actions */}
-          <div className="flex items-center gap-2">
+          <div className="app-header-actions flex items-center gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.xlsm" className="hidden" />
             <button
               onClick={handleNewSession}
@@ -652,7 +652,7 @@ export default function App() {
 
         {/* ── Sessions Sidebar ─────────────────────────────────────────── */}
         {sidebarOpen && (
-          <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
+          <aside className="sessions-sidebar w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <History className="w-4 h-4 text-slate-500" />
@@ -730,7 +730,7 @@ export default function App() {
         )}
 
         {/* ── Main Content ──────────────────────────────────────────────── */}
-        <main className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 flex flex-col gap-5 min-w-0">
+        <main className="app-main flex-1 overflow-y-auto px-4 sm:px-6 py-5 flex flex-col gap-5 min-w-0">
 
           {/* Loading overlay */}
           {loading && (
@@ -782,8 +782,8 @@ export default function App() {
           </div>
 
           {/* Tabs */}
-          <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 rounded-xl shadow-sm">
-            <div className="flex gap-1">
+          <div className="app-tabs flex items-center justify-between border-b border-slate-200 bg-white px-4 rounded-xl shadow-sm">
+            <div className="app-tab-buttons flex gap-1">
               {[
                 { key: 'transactions', label: `Petty Cash Sheet (${transactions.length})`, icon: <Table className="w-4 h-4" />, color: 'amber' },
                 { key: 'summary', label: 'Petty Cash Summary', icon: <FileSpreadsheet className="w-4 h-4" />, color: 'blue' },
@@ -1195,7 +1195,7 @@ export default function App() {
               <h3 className="text-base font-bold text-slate-900">Add New Petty Cash Entry</h3>
               <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-4 text-xs">
+            <div className="transaction-form-grid mt-4 grid grid-cols-2 gap-4 text-xs">
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Date</label>
                 <input type="date" value={txForm.date} onChange={e => setTxForm({ ...txForm, date: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
@@ -1275,7 +1275,7 @@ export default function App() {
               <h3 className="text-base font-bold text-slate-900">Edit Transaction Row</h3>
               <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-4 text-xs">
+            <div className="transaction-form-grid mt-4 grid grid-cols-2 gap-4 text-xs">
               <div>
                 <label className="block text-slate-600 font-medium mb-1">Date</label>
                 <input type="text" value={currentEditTx.date || ''} onChange={e => setCurrentEditTx({ ...currentEditTx, date: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2" />

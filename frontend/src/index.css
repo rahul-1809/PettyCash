@@ -9,6 +9,104 @@
   }
 }
 
+@media (max-width: 767px) {
+  .app-header-inner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .app-header-inner > :first-child {
+    min-width: 0;
+    flex: 1 1 180px;
+  }
+
+  .app-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .app-header-actions button {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 34px;
+  }
+
+  .sessions-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 35;
+    width: min(18rem, 86vw);
+    box-shadow: 8px 0 24px rgb(15 23 42 / 15%);
+  }
+
+  .app-main {
+    width: 100%;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+
+  .app-tabs {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  .app-tab-buttons {
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .app-tab-buttons button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .app-tabs > button {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  .transaction-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transaction-form-grid .col-span-2 {
+    grid-column: span 1 / span 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-header-inner {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .app-header-inner h1 {
+    font-size: 0.875rem;
+  }
+
+  .app-header-inner h1 span {
+    display: none;
+  }
+
+  .app-header-actions button {
+    font-size: 0.6875rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  .app-main .grid-cols-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Custom scrollbars for data tables */
 ::-webkit-scrollbar {
   width: 8px;
@@ -24,4 +122,3 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
-
