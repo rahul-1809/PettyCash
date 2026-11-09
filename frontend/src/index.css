@@ -40,6 +40,10 @@
     box-shadow: 8px 0 24px rgb(15 23 42 / 15%);
   }
 
+  .sidebar-close-button {
+    display: block;
+  }
+
   .app-main {
     width: 100%;
     padding-left: 0.75rem;
@@ -79,6 +83,12 @@
 
   .transaction-form-grid .col-span-2 {
     grid-column: span 1 / span 1;
+  }
+}
+
+@media (min-width: 768px) {
+  .sidebar-close-button {
+    display: none;
   }
 }
 

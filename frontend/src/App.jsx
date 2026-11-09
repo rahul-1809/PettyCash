@@ -665,6 +665,14 @@ export default function App() {
               >
                 <FilePlus2 className="w-4 h-4" />
               </button>
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="sidebar-close-button p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition"
+                title="Close Sessions Panel"
+                aria-label="Close Sessions Panel"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             {/* Session list */}
