@@ -1,122 +1,179 @@
-# PettyCash Pro 💰
+# PettyCash Pro
 
-> An interactive, production-ready web application for managing petty cash ledgers, auto-generating dynamic pivot summaries & reconciliation statements, and exporting template-faithful Excel workbooks.
-
----
-
-## 🌟 Key Features
-
-1. **Excel Upload & Ingestion**:
-   - Upload any petty cash `.xlsx` file.
-   - Starts with empty sessions; upload an Excel workbook into the active session.
-   - Auto-extracts opening balance, date periods, ledgers, and cost centers.
-
-2. **Interactive Spreadsheet & CRUD Management**:
-   - **Inline Edit & Row Management**: Modify descriptions, ledgers, receipts, payments, categories, approvers, and requesters.
-   - **Add New Entry**: Dedicated form modal with auto-completion from known ledgers and projects.
-   - **Delete Entries**: Instant removal with safety confirmation.
-   - **Live Balance Recalculation**: Recomputes running `Outstanding Balance` sequentially ($\text{Balance}_i = \text{Balance}_{i-1} + \text{Receipt}_i - \text{Payment}_i$) whenever transactions or the opening balance change.
-   - **Realtime Filter & Search**: Search by narration or filter by Project and Ledger.
-
-3. **Dynamic Petty Cash Summary**:
-   - **Left Table (Pivot Breakdown)**: Groups transactions by Project / Cost Center, calculating `Sum of Receipt`, `Sum of Payment`, and `Grand Total`.
-   - **Right Table (Reconciliation Statement)**:
-     - Opening Balance with period start date.
-     - Additions breakdown with `=+SUM(...)` formula.
-     - Withdrawals breakdown with `=-SUM(...)` formula.
-     - Closing Balance evaluated as `Opening + Additions - Withdrawals`.
-
-4. **Template-Faithful Excel Export**:
-   - Downloads a multi-sheet `.xlsx` file containing:
-     - **`Petty Cash Sheet`**: Full ledger with signature yellow headers (`#FFFF00`), borders, column widths, and currency formatting.
-     - **`Petty Cash Summary `**: Side-by-side pivot table and reconciliation table with exact native Excel formulas (`=+SUM(...)`, `=-SUM(...)`), headers, and borders.
-
-5. **Visual Analytics**:
-   - Live breakdown bars showing expense distributions across projects and inflow sources.
+A production-grade, enterprise petty cash management and canonical ledger system with role-based governance, multi-tier approval workflows, voucher receipt audit trails, and template-faithful financial Excel reporting.
 
 ---
 
-## 🚀 Quick Start (Local Run)
+## Architecture & Core Capabilities
 
-### Option 1: Quick Launch
-```bash
-./run.sh
-```
-Open **[http://localhost:8000](http://localhost:8000)** in your browser!
+- **Role-Based Access Control (RBAC)**:
+  - **Employee**: Drafts petty cash requests, attaches cost centers/ledgers, uploads voucher evidence upon approval, and tracks disbursement status.
+  - **Manager**: Reviews pending requests within their hierarchy, approves, requests corrections with detailed feedback, or rejects.
+  - **Admin**: Master financial control, user & hierarchy provisioning, cash vault opening balance adjustments, financial accounting period locks, and canonical ledger posting.
 
-### Option 2: Run Backend & Frontend Separately
+- **Voucher Audit Trail & Document Evidence**:
+  - Secure storage for PDF and image receipts with SHA-256 integrity verification.
+  - Immutable audit logging tracking every state transition with correlation IDs and diff payloads.
+
+- **Dual-Engine Persistence & Cloud Scale**:
+  - **Local Development**: Zero-config SQLite database.
+  - **Production**: Live cloud PostgreSQL (Supabase) with persistent connection pooling (`psycopg_pool`) and query latency optimization (<300ms).
+
+- **Enterprise Observability & Protection**:
+  - Health probes (`/health/live` and `/health/ready`) monitoring database and storage availability.
+  - Built-in production alerts (queue backlog, failed postings, auth failures, anomalous balances, backup freshness).
+  - Sliding-window in-memory rate limiting and short-lived session caching.
+
+- **Financial Reporting Engine**:
+  - 12-column template-faithful Excel generation adhering strictly to accounting standards.
+  - Side-by-side dynamic pivot tables and reconciliation statements with native formula preservation.
+  - Complete monthly ZIP evidence packages bundling workbooks and physical receipt documents.
+
+---
+
+## Tech Stack
+
+| Component | Technology |
+| :--- | :--- |
+| **Backend API** | Python 3.11+, FastAPI, Uvicorn, Pydantic |
+| **Frontend UI** | React 18, Vite, Tailwind CSS, Lucide Icons |
+| **Database** | PostgreSQL (Supabase) / SQLite, Psycopg 3 Pool |
+| **Excel Engine** | OpenPyXL, Pandas |
+| **Auth & Security** | BCrypt password hashing, Bearer Token sessions, Sliding-window Rate Limiting |
+| **Notifications** | Gmail SMTP background delivery, Real-time in-app alerts |
+| **Deployment** | Docker multi-stage build, Render Blueprint (`render.yaml`) |
+
+---
+
+## Local Development Quickstart
+
+### Prerequisites
+- Python 3.11+
+- Node.js 18+ & npm
+
+### 1. Backend Setup
 ```bash
-# 1. Start Backend (Port 8000)
+# Clone the repository
+git clone https://github.com/rahul-1809/PettyCash.git
+cd PettyCash
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install backend dependencies
+pip install -r backend/requirements.txt
+
+# Configure environment variables
+cp .env.example .env
+# Edit .env with your database or SMTP credentials if using cloud PostgreSQL
+
+# Start FastAPI server (Runs on http://localhost:8000)
 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-
-# 2. In a separate terminal, run Vite Dev Server (Port 3000)
-cd frontend
-npm run dev
 ```
 
----
-
-## 🐳 Production Deployment
-
-### Docker Deployment (Render, Railway, Fly.io, AWS, GCP)
-A production multi-stage Dockerfile is included:
+### 2. Frontend Setup
 ```bash
-docker build -t petty-cash-pro .
-docker run -p 8000:8000 petty-cash-pro
+# In a separate terminal window
+cd frontend
+npm install
+npm run dev
+# Vite runs on http://localhost:3000 (proxies /api to port 8000)
 ```
-
-### Cloud Platforms (e.g., Render / Railway / Heroku):
-- Set build command: `cd frontend && npm install && npm run build && cd .. && pip install -r backend/requirements.txt`
-- Set start command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
-
-### Recommended Free Deployment: Render + Supabase
-
-The app uses SQLite locally, but Render's free filesystem is temporary. For
-persistent saved sessions, set `DATABASE_URL` to a Supabase PostgreSQL
-connection string. The backend automatically uses Supabase when `DATABASE_URL`
-is set and keeps SQLite as the local-development fallback.
-
-1. Create a free project at [Supabase](https://supabase.com).
-2. Open **Connect**, select **Transaction pooler**, and copy its connection
-   string. Replace the password placeholder with your database password.
-3. Push this repository to GitHub.
-4. In [Render](https://render.com), create **New → Web Service**, connect the
-   repository, choose **Docker**, and select the **Free** plan.
-5. Add this Render environment variable:
-
-   ```text
-   DATABASE_URL=postgresql://...
-   ```
-
-6. Set the Render health check path to `/api/health`, then deploy.
-
-The `sessions` table is created automatically on the first startup. Do not
-commit the Supabase connection string to the repository. Supabase Free
-projects can pause after inactivity; their database contents remain stored.
-Each uploaded session stores both the parsed transactions/summary and the
-original workbook contents in Supabase. Existing sessions created before this
-feature contain their parsed data but cannot recover an original workbook that
-was never stored.
 
 ---
 
-## 📁 Project Structure
+## Environment Variables Configuration
 
+Create a `.env` file in the root directory:
+
+```env
+# Runtime
+APP_ENV=development
+PORT=8000
+
+# Persistence
+# Leave blank to use local SQLite (sessions.db). Set PostgreSQL URL for production.
+DATABASE_URL=postgresql://postgres.xxx:password@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres
+
+# CORS & Base URL
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8000
+APP_BASE_URL=http://localhost:3000
+
+# Logging & Uploads
+LOG_LEVEL=INFO
+UPLOAD_MAX_BYTES=10485760
+
+# SMTP Email Notification Service
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_SENDER=your-email@gmail.com
 ```
-PettyCash/
-├── backend/
-│   ├── main.py              # FastAPI application & REST endpoints
-│   ├── excel_service.py     # openpyxl parser, calculation & export generator
-│   └── requirements.txt     # Python dependencies
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx          # Interactive React dashboard & CRUD
-│   │   ├── main.jsx         # React DOM root
-│   │   └── index.css        # Tailwind styles & scrollbars
-│   ├── package.json         # Node dependencies
-│   ├── tailwind.config.js   # Tailwind configuration
-│   └── vite.config.js       # Vite configuration with API proxy
-├── Dockerfile               # Production multi-stage Docker build
-├── run.sh                   # One-click startup script
-└── README.md
+
+---
+
+## Initial Setup & Production Bootstrap
+
+### Creating the First Administrator
+1. When starting with a clean database, open the web app.
+2. The login screen automatically displays the **"Init Admin"** tab when no administrator exists.
+3. Enter the desired administrator username, email, and password (minimum 12 characters).
+4. Click **Initialize Administrator**.
+5. Once created, the bootstrap endpoint permanently locks down, and the "Init Admin" tab disappears from the UI.
+
+Alternatively, you can initialize an administrator via CLI:
+```bash
+python scripts/create_admin.py --username "Admin" --email "admin@yourcompany.com" --password "YourStrongPassword123!"
 ```
+
+### Resetting Data for Production
+To clear all test/demo transactions, requests, and users while keeping database tables, system roles, and baseline categories intact:
+```bash
+python scripts/reset_database.py
+```
+*(You will be prompted to type `RESET` to confirm).*
+
+---
+
+## Production Deployment on Render
+
+This project includes a multi-stage [Dockerfile](Dockerfile) and a [render.yaml](render.yaml) blueprint for one-click deployment.
+
+### Steps to Deploy:
+1. Push your repository to GitHub:
+   ```bash
+   git add .
+   git commit -m "feat: production release"
+   git push origin main
+   ```
+2. In the [Render Dashboard](https://dashboard.render.com/):
+   - Click **New +** > **Web Service**.
+   - Select your GitHub repository.
+   - Select Environment: **Docker**.
+   - Health Check Path: `/health/ready`.
+3. Add the required Environment Variables in Render:
+   - `APP_ENV`: `production`
+   - `DATABASE_URL`: Your Supabase connection string.
+   - `ALLOWED_ORIGINS`: `*` (or your Render URL).
+   - `APP_BASE_URL`: `https://<your-service>.onrender.com`
+   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_SENDER`.
+4. Click **Deploy**.
+
+---
+
+## Automated Verification & Testing
+
+The application includes an extensive automated test suite covering all 12 system phases (domain models, authentication, request lifecycle, approvals, vouchers, ledger postings, financial periods, reporting, and operations):
+
+```bash
+PYTHONPATH=. pytest -v
+```
+
+All 74 test suites run in an isolated test database and must pass before deployment.
+
+---
+
+## License
+Proprietary & Confidential. Built for enterprise financial management.

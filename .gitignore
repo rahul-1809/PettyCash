@@ -4,4 +4,12 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 sessions.db
+sessions_backup_*.db
 .DS_Store
+.env
+.env.local
+private_supporting_files/
+backups/
+supabase_backup_legacy.json
+.pytest_cache/
+.agents/

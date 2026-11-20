@@ -3,6 +3,10 @@
 __pycache__
 *.pyc
 sessions.db
+.env
+.env.local
+private_supporting_files
+backups
 frontend/node_modules
 frontend/dist
 frontend/.vite
