@@ -31,6 +31,115 @@ A production-grade, enterprise petty cash management and canonical ledger system
 
 ---
 
+## 🏛️ System Architecture & Workflows
+
+### 1. Multi-Tier System Architecture
+```mermaid
+flowchart TD
+    subgraph ClientLayer["Frontend Client Layer (React 18 + Vite + Tailwind)"]
+        UI_Emp["Employee Dashboard (Drafting & Vouchers)"]
+        UI_Mgr["Manager Dashboard (Approvals & Hierarchy)"]
+        UI_Adm["Admin Dashboard (Vault, Periods & Ledger)"]
+        API_Client["Centralized API Client (Bearer Tokens & Correlation IDs)"]
+        UI_Emp --> API_Client
+        UI_Mgr --> API_Client
+        UI_Adm --> API_Client
+    end
+
+    subgraph GatewayLayer["API Gateway & Middleware Layer (FastAPI)"]
+        MW_Trace["Correlation ID Tracing Middleware"]
+        MW_CORS["CORS Middleware"]
+        MW_Rate["In-Memory Sliding-Window Rate Limiter"]
+        MW_Auth["Bearer Token Auth & In-Memory Fast Cache"]
+        API_Client --> MW_Trace
+        MW_Trace --> MW_CORS
+        MW_CORS --> MW_Rate
+        MW_Rate --> MW_Auth
+    end
+
+    subgraph ServiceLayer["Core Domain Services"]
+        S_Req["Request & Workflow Service"]
+        S_Post["Posting & Canonical Ledger Service"]
+        S_Fin["Financial Control & Vault Service"]
+        S_Supp["Supporting Files & SHA-256 Storage"]
+        S_Audit["Immutable Audit Service"]
+        S_Notif["Notification & SMTP Email Service"]
+        S_Rep["Excel & Monthly ZIP Report Engine"]
+        MW_Auth --> S_Req
+        MW_Auth --> S_Post
+        MW_Auth --> S_Fin
+        MW_Auth --> S_Supp
+        MW_Auth --> S_Audit
+        MW_Auth --> S_Notif
+        MW_Auth --> S_Rep
+    end
+
+    subgraph PersistenceLayer["Storage & Database Layer"]
+        DB_Pool["Psycopg 3 Connection Pool (min: 2, max: 12)"]
+        Supabase[("Supabase PostgreSQL (Cloud Database)")]
+        LocalDB[("SQLite Fallback (sessions.db)")]
+        FileStore["Private Supporting Files (PDF/PNG Receipts)"]
+        SMTP_Server["Gmail SMTP Server (Email Dispatch)"]
+        
+        S_Req & S_Post & S_Fin & S_Audit & S_Rep --> DB_Pool
+        DB_Pool --> Supabase
+        DB_Pool -.-> LocalDB
+        S_Supp --> FileStore
+        S_Notif --> SMTP_Server
+    end
+```
+
+### 2. Request Lifecycle & Approval State Machine
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT: Employee creates request
+    DRAFT --> SUBMITTED: Employee submits for review
+    SUBMITTED --> DRAFT: Manager requests correction
+    SUBMITTED --> REJECTED: Manager rejects request
+    SUBMITTED --> APPROVED: Manager approves request
+    APPROVED --> READY_FOR_POSTING: Employee uploads physical voucher
+    READY_FOR_POSTING --> RETURNED_FOR_CORRECTION: Admin flags invoice discrepancy
+    RETURNED_FOR_CORRECTION --> READY_FOR_POSTING: Employee re-uploads voucher
+    READY_FOR_POSTING --> POSTED: Admin finalizes to Canonical Ledger
+    POSTED --> REVERSED: Admin executes audited reversal
+    POSTED --> [*]
+    REJECTED --> [*]
+    REVERSED --> [*]
+```
+
+### 3. End-to-End Voucher Evidence & Ledger Posting Sequence
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Employee
+    actor Manager
+    actor Admin
+    participant System as FastAPI Backend
+    participant DB as Supabase PostgreSQL
+    participant FS as Supporting Storage
+    participant SMTP as Gmail SMTP
+
+    Employee->>System: Submit Petty Cash Request (Amount, Purpose, Cost Center)
+    System->>DB: Record Request (SUBMITTED) & Audit Event
+    System->>SMTP: Dispatch notification email to Manager
+    Manager->>System: Review & Approve Request
+    System->>DB: Update Status (APPROVED) & Audit Event
+    System->>SMTP: Dispatch approval email to Employee
+    Employee->>System: Upload Receipt Document (PDF/JPG)
+    System->>FS: Verify SHA-256 Checksum & Save to Disk
+    System->>DB: Link voucher to request (READY_FOR_POSTING)
+    System->>SMTP: Dispatch ready-for-posting email to Admin
+    Admin->>System: Validate voucher against Ledger Window
+    Admin->>System: Post Request to Canonical Ledger
+    System->>DB: Deduct Vault, Credit Expense, Seal Transaction
+    System->>SMTP: Dispatch confirmation email to Employee
+    Admin->>System: Request Monthly Audit ZIP Package
+    System->>System: Generate 12-Column Excel & Attach Evidence
+    System-->>Admin: Deliver Complete Reconciliation ZIP Bundle
+```
+
+---
+
 ## Tech Stack
 
 | Component | Technology |

@@ -13,3 +13,7 @@ backups/
 supabase_backup_legacy.json
 .pytest_cache/
 .agents/
+Demo.xlsx
+*.xlsx
+Petty Cash Report.pdf
+*.pdf
