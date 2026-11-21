@@ -13,16 +13,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend import database
+from backend.auth_service import clear_auth_cache
 
 
-TABLES_TO_CLEAR = [
+TARGET_TABLES = [
     "supporting_files",
     "request_status_history",
     "petty_cash_requests",
     "company_receipts",
     "financial_periods",
-    "vault_adjustments",
-    "review_assignments",
+    "ledger_adjustments",
+    "ledger_entries",
+    "legacy_ledger_sessions",
+    "manager_employee_assignments",
     "user_sessions",
     "onboarding_tokens",
     "notification_preferences",
@@ -37,7 +40,9 @@ def reset_database(force: bool = False) -> None:
     db_engine = "Supabase PostgreSQL" if database.DATABASE_URL else "Local SQLite"
     print(f"Target Database: {db_engine}")
     if database.DATABASE_URL:
-        print(f"Database URL: {database.DATABASE_URL[:40]}...")
+        # Mask credentials in output
+        clean_url = database.DATABASE_URL.split("@")[-1] if "@" in database.DATABASE_URL else database.DATABASE_URL
+        print(f"Host: {clean_url}")
 
     if not force:
         print("\nWARNING: This will permanently delete all users, requests, receipts, and audit events.")
@@ -47,21 +52,49 @@ def reset_database(force: bool = False) -> None:
             return
 
     with database.get_connection() as conn:
-        for table in TABLES_TO_CLEAR:
-            try:
-                if database.DATABASE_URL:
-                    conn.execute(f"TRUNCATE TABLE {table} CASCADE")
-                else:
-                    conn.execute(f"DELETE FROM {table}")
-                print(f"  ✓ Cleared table: {table}")
-            except Exception as exc:
-                # Some tables may not exist yet or error if already empty
-                print(f"  - Skipped/Empty table {table}: {exc}")
+        cur = conn.cursor()
 
-        # Ensure base system roles and categories remain populated
+        if database.DATABASE_URL:
+            # PostgreSQL: find which target tables actually exist in schema
+            cur.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
+            """)
+            existing_tables = set(r["table_name"] for r in cur.fetchall())
+            tables_to_truncate = [t for t in TARGET_TABLES if t in existing_tables]
+
+            if tables_to_truncate:
+                # Truncate all tables atomically in a single statement with CASCADE
+                truncate_stmt = f"TRUNCATE TABLE {', '.join(tables_to_truncate)} CASCADE;"
+                cur.execute(truncate_stmt)
+                conn.commit()
+
+                for t in tables_to_truncate:
+                    print(f"  ✓ Cleared table: {t}")
+            else:
+                print("  No target tables found to clear.")
+        else:
+            # SQLite: temporarily disable FKs to avoid ordering constraints
+            cur.execute("PRAGMA foreign_keys = OFF;")
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            existing_tables = set(r["name"] for r in cur.fetchall())
+
+            for t in TARGET_TABLES:
+                if t in existing_tables:
+                    cur.execute(f"DELETE FROM {t};")
+                    print(f"  ✓ Cleared table: {t}")
+
+            conn.commit()
+            cur.execute("PRAGMA foreign_keys = ON;")
+
+        # Ensure base system roles, categories, and accounts remain populated
         database.seed_system_roles()
         database._seed_project_categories()
         conn.commit()
+
+    # Clear in-memory cache
+    clear_auth_cache()
 
     print("\nDatabase reset complete!")
     print("The system is now in a pristine state with 0 users.")
