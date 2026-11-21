@@ -14,6 +14,7 @@ import {
   AlertCircle,
   RotateCcw,
   Download,
+  Key,
   Lock,
   Unlock,
   Eye,
@@ -980,14 +981,37 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                       </td>
                       <td className="p-3 text-right">
                         {u.id !== user?.id ? (
-                          <button
-                            type="button"
-                            title={`Delete ${u.username}`}
-                            onClick={() => handleDeleteUser(u)}
-                            className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="inline-flex items-center gap-1 justify-end">
+                            <button
+                              type="button"
+                              title={`Generate new setup token for ${u.username}`}
+                              onClick={async () => {
+                                try {
+                                  const res = await api.generateUserToken(u.id);
+                                  setOnboardingTokenResult(res.onboarding_token);
+                                  setProvisionModalOpen(true);
+                                  addToast({
+                                    type: 'success',
+                                    title: 'Token Generated',
+                                    message: `Setup token generated for ${u.username}.`,
+                                  });
+                                } catch (err) {
+                                  addToast({ type: 'error', message: err.message });
+                                }
+                              }}
+                              className="p-1.5 rounded text-slate-400 hover:text-amber-400 hover:bg-amber-950/40 cursor-pointer transition-colors"
+                            >
+                              <Key className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              title={`Delete ${u.username}`}
+                              onClick={() => handleDeleteUser(u)}
+                              className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-[10px] text-slate-600 font-mono">Current User</span>
                         )}
@@ -2550,20 +2574,45 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       >
         {onboardingTokenResult ? (
           <div className="space-y-4 text-xs">
-            <div className="p-4 bg-emerald-950/60 border border-emerald-800 rounded-lg space-y-2">
-              <div className="font-bold text-emerald-300 text-sm">User Provisioned Successfully!</div>
+            <div className="p-4 bg-emerald-950/60 border border-emerald-800 rounded-lg space-y-3">
+              <div className="font-bold text-emerald-300 text-sm">User Setup Token Ready!</div>
               <p className="text-slate-300">
                 Share this one-time onboarding setup token with the user so they can set their password:
               </p>
-              <div className="p-2.5 bg-slate-950 rounded font-mono text-xs text-amber-300 select-all border border-slate-800">
-                {onboardingTokenResult}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 p-2.5 bg-slate-950 rounded font-mono text-xs text-amber-300 select-all border border-slate-800 break-all">
+                  {onboardingTokenResult}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(onboardingTokenResult);
+                    addToast({ type: 'success', message: 'Token copied to clipboard!' });
+                  }}
+                  className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium cursor-pointer shrink-0 transition-colors"
+                >
+                  Copy
+                </button>
+              </div>
+              <div className="p-2.5 bg-slate-900/90 rounded border border-slate-800 text-[11px] text-slate-300 space-y-1">
+                <p className="font-semibold text-emerald-400">How the user logs in:</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-slate-400">
+                  <li>Go to the PettyCash login page.</li>
+                  <li>Click the <span className="text-slate-200 font-medium">Invite / Set Password</span> tab.</li>
+                  <li>Paste this token and set their password.</li>
+                </ol>
               </div>
             </div>
             <div className="flex justify-end">
               <button
                 type="button"
-                onClick={() => setProvisionModalOpen(false)}
-                className="px-4 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                onClick={() => {
+                  setProvisionModalOpen(false);
+                  setOnboardingTokenResult('');
+                  setNewUsername('');
+                  setNewUserEmail('');
+                }}
+                className="px-4 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
               >
                 Done
               </button>

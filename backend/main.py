@@ -28,6 +28,7 @@ try:
     )
     from backend.auth_service import (
         authenticate_user,
+        create_onboarding_token,
         create_session as create_auth_session,
         get_authenticated_user,
         revoke_session,
@@ -692,10 +693,9 @@ def create_user(
                     logging.getLogger("petty_cash.app").warning(f"Failed to dispatch onboarding email: {send_err}")
 
             threading.Thread(target=_async_send_onboarding, daemon=True).start()
-            token_response = None
-        else:
-            token_response = onboarding_token
-        return {**user, "onboarding_token": token_response}
+
+        # Always return onboarding_token so Admin can view/share it directly
+        return {**user, "onboarding_token": onboarding_token}
     except HTTPException:
         raise
     except (ValueError, RuntimeError) as exc:
@@ -705,6 +705,17 @@ def create_user(
 @app.get("/api/users", tags=["Users & Assignments"], summary="List users (Admin)")
 def get_users(_: dict = Depends(require_roles("Admin"))):
     return list_users()
+
+
+@app.post("/api/users/{user_id}/token", tags=["Users & Assignments"], summary="Generate setup token for user (Admin)")
+def generate_user_token_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
+    try:
+        token = create_onboarding_token(user_id)
+        return {"user_id": user_id, "onboarding_token": token}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to generate token: {exc}") from exc
 
 
 @app.delete("/api/users/{user_id}", tags=["Users & Assignments"], summary="Delete user (Admin)")

@@ -128,6 +128,7 @@ export const api = {
   listUsers: () => request('/users'),
   provisionUser: (username, email, role) =>
     request('/users', { method: 'POST', body: { username, email, role } }),
+  generateUserToken: (userId) => request(`/users/${userId}/token`, { method: 'POST' }),
   deleteUser: (userId) => request(`/users/${userId}`, { method: 'DELETE' }),
   listAssignments: () => request('/assignments'),
   createAssignment: (manager_id, employee_id) =>
