@@ -1,5 +1,6 @@
 """Server-enforced petty cash request lifecycle."""
 
+import logging
 import secrets
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -331,6 +332,21 @@ def _transition(
     amt_str = f"₹{Decimal(str(row['amount'])).quantize(Decimal('0.01'))}"
     purpose_str = row["purpose"] or "Petty cash expense"
 
+    def _notify_admins(evt_type: str, notif_title: str, notif_msg: str):
+        try:
+            with database.get_connection() as conn:
+                marker = database._placeholder()
+                admin_rows = conn.execute(
+                    f"SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = {marker} AND u.is_active = 1",
+                    ("Admin",),
+                ).fetchall()
+                for ar in admin_rows:
+                    aid = ar["id"] if isinstance(ar, dict) else ar[0]
+                    if aid != row["approving_manager_id"]:
+                        create_notification(aid, evt_type, notif_title, notif_msg, "petty_cash_request", request_id)
+        except Exception as exc:
+            logging.getLogger("petty_cash.app").warning(f"Failed to notify admins: {exc}")
+
     if target == "SUBMITTED":
         create_notification(
             row["approving_manager_id"],
@@ -340,6 +356,11 @@ def _transition(
             "petty_cash_request",
             request_id,
         )
+        _notify_admins(
+            "REQUEST_SUBMITTED",
+            f"New request submitted by {requester_name}",
+            f"Request for {amt_str} ({purpose_str}) submitted by {requester_name} awaiting approval by Manager {manager_name}.",
+        )
     elif target == "APPROVED":
         create_notification(
             row["requester_id"],
@@ -348,6 +369,11 @@ def _transition(
             f"Your request for {amt_str} ({purpose_str}) was approved by Manager {manager_name}. Please upload voucher receipts and submit for posting.",
             "petty_cash_request",
             request_id,
+        )
+        _notify_admins(
+            "REQUEST_APPROVED",
+            f"Petty cash request approved by {manager_name}",
+            f"Request for {amt_str} ({purpose_str}) by {requester_name} approved by Manager {manager_name}. Awaiting voucher upload and posting.",
         )
     elif target == "DRAFT":
         create_notification(

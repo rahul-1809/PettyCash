@@ -8,7 +8,7 @@ import threading
 from email.message import EmailMessage
 from typing import Iterable, Optional
 
-logger = logging.getLogger("notifications")
+logger = logging.getLogger("petty_cash.app")
 
 try:
     from backend import database
@@ -18,31 +18,37 @@ except ImportError:
 
 def _send_notification_email_async(user_id: str, title: str, message: str) -> None:
     try:
-        prefs = get_preferences(user_id)
-        if not prefs.get("email_enabled", 1):
-            return
-
         marker = database._placeholder()
         with database.get_connection() as connection:
             user_row = connection.execute(
-                f"SELECT email, username FROM users WHERE id = {marker}",
+                f"""
+                SELECT u.email, u.username, np.email_enabled
+                FROM users u
+                LEFT JOIN notification_preferences np ON np.user_id = u.id
+                WHERE u.id = {marker}
+                """,
                 (user_id,),
             ).fetchone()
             if not user_row or not user_row["email"]:
+                return
+            if user_row["email_enabled"] is not None and not user_row["email_enabled"]:
+                logger.info(f"Notification email skipped for user {user_id}: email_enabled is 0 in preferences")
                 return
             recipient_email = user_row["email"]
             recipient_name = user_row["username"] or "User"
 
         host = os.getenv("SMTP_HOST")
-        port = int(os.getenv("SMTP_PORT", 587))
+        port_raw = os.getenv("SMTP_PORT", "587")
+        port = int(port_raw) if port_raw and str(port_raw).isdigit() else 587
         username = os.getenv("SMTP_USERNAME")
         password = os.getenv("SMTP_PASSWORD")
         sender = os.getenv("SMTP_SENDER")
 
         if not all((host, username, password, sender)):
+            logger.warning(f"SMTP configuration incomplete; cannot dispatch notification email to {recipient_email}")
             return
 
-        app_url = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
+        app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
         body = (
             f"Hello {recipient_name},\n\n"
             f"{message}\n\n"
@@ -61,7 +67,7 @@ def _send_notification_email_async(user_id: str, title: str, message: str) -> No
         )
         logger.info(f"Dispatched email notification '{title}' to {recipient_email}")
     except Exception as exc:
-        logger.warning(f"Failed to dispatch email notification to user {user_id}: {exc}")
+        logger.error(f"Failed to dispatch email notification to user {user_id}: {exc}", exc_info=True)
 
 
 def ensure_preferences(user_id: str) -> None:

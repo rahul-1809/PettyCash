@@ -163,6 +163,24 @@ def post_request(request_id: str, admin_id: str, effective_date: str) -> dict:
         "petty_cash_request",
         request_id,
     )
+    if request["approving_manager_id"] and request["approving_manager_id"] != request["requester_id"]:
+        create_notification(
+            request["approving_manager_id"],
+            "REQUEST_POSTED",
+            f"Petty cash request posted by Admin {admin_name}",
+            f"Request for {amt_str} ({purpose_str}) approved by you was posted to the ledger by Admin {admin_name}.",
+            "petty_cash_request",
+            request_id,
+        )
+    if admin_id and admin_id not in (request["requester_id"], request["approving_manager_id"]):
+        create_notification(
+            admin_id,
+            "REQUEST_POSTED",
+            "Petty cash request posted successfully",
+            f"Request for {amt_str} ({purpose_str}) was successfully posted to the ledger on {effective_date}.",
+            "petty_cash_request",
+            request_id,
+        )
     return {
         "request_id": request_id,
         "status": "POSTED",

@@ -137,10 +137,14 @@ def delete_master_record(table: str, record_id: str, actor_id: Optional[str] = N
             raise LookupError(f"{table[:-1].capitalize()} not found.")
 
         ref_field = "project_id" if table == "projects" else "ledger_id"
-        usage = connection.execute(
+        usage_row = connection.execute(
             f"SELECT COUNT(*) FROM petty_cash_requests WHERE {ref_field}={marker}",
             (record_id,),
-        ).fetchone()[0]
+        ).fetchone()
+        usage = (
+            usage_row["count"] if isinstance(usage_row, dict) and "count" in usage_row
+            else (next(iter(usage_row.values())) if isinstance(usage_row, dict) else (usage_row[0] if usage_row else 0))
+        )
         if usage > 0:
             raise ValueError(
                 f"Cannot permanently delete '{record['name']}' because it is linked to {usage} existing transaction request(s). "

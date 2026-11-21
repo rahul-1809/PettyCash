@@ -1068,10 +1068,14 @@ def api_submit_for_posting(
             raise HTTPException(status_code=403, detail="Only the requester can submit this request for posting.")
         if req_row["status"] not in {"APPROVED", "SUPPORTING_UPLOADED"}:
             raise HTTPException(status_code=400, detail="Only approved requests can be submitted for posting.")
-        files = connection.execute(
+        files_row = connection.execute(
             f"SELECT COUNT(*) FROM supporting_files WHERE request_id={marker}",
             (request_id,),
-        ).fetchone()[0]
+        ).fetchone()
+        files = (
+            files_row["count"] if isinstance(files_row, dict) and "count" in files_row
+            else (next(iter(files_row.values())) if isinstance(files_row, dict) else (files_row[0] if files_row else 0))
+        )
         if files == 0:
             raise HTTPException(status_code=400, detail="Please upload at least one supporting receipt/voucher before submitting for posting.")
 

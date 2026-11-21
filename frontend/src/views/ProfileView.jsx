@@ -4,14 +4,13 @@ import { api } from '../api';
 
 export default function ProfileView({ user, addToast }) {
   const [inAppEnabled, setInAppEnabled] = useState(true);
-  const [emailEnabled, setEmailEnabled] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [emailEnabled, setEmailEnabled] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     async function loadPrefs() {
       try {
-        setLoading(true);
         const prefs = await api.getNotificationPreferences();
         if (prefs) {
           setInAppEnabled(Boolean(prefs.in_app_enabled));
@@ -26,22 +25,37 @@ export default function ProfileView({ user, addToast }) {
     loadPrefs();
   }, []);
 
-  const handleSave = async (e) => {
-    e.preventDefault();
+  const handleToggleInApp = async (checked) => {
+    setInAppEnabled(checked);
     try {
       setSaving(true);
-      await api.updateNotificationPreferences(inAppEnabled, emailEnabled);
+      await api.updateNotificationPreferences(checked, emailEnabled);
       addToast({
         type: 'success',
-        title: 'Preferences Updated',
-        message: 'Notification settings saved successfully.',
+        title: 'Preference Updated',
+        message: `In-app notifications ${checked ? 'enabled' : 'disabled'}.`,
       });
     } catch (err) {
+      setInAppEnabled(!checked);
+      addToast({ type: 'error', message: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleEmail = async (checked) => {
+    setEmailEnabled(checked);
+    try {
+      setSaving(true);
+      await api.updateNotificationPreferences(inAppEnabled, checked);
       addToast({
-        type: 'error',
-        title: 'Update Failed',
-        message: err.message,
+        type: 'success',
+        title: 'Preference Updated',
+        message: `Email alerts ${checked ? 'enabled' : 'disabled'}.`,
       });
+    } catch (err) {
+      setEmailEnabled(!checked);
+      addToast({ type: 'error', message: err.message });
     } finally {
       setSaving(false);
     }
@@ -89,58 +103,56 @@ export default function ProfileView({ user, addToast }) {
 
       {/* Notification Preferences Card */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 shadow-sm space-y-4">
-        <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider text-xs flex items-center gap-2">
-          <Bell className="w-4 h-4 text-emerald-400" /> Notification Delivery Preferences
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider text-xs flex items-center gap-2">
+            <Bell className="w-4 h-4 text-emerald-400" /> Notification Delivery Preferences
+          </h2>
+          {saving && (
+            <span className="text-[11px] text-emerald-400 animate-pulse font-medium">Saving...</span>
+          )}
+        </div>
 
-        <form onSubmit={handleSave} className="space-y-4 pt-2">
-          <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800">
-            <div>
-              <div className="text-sm font-medium text-slate-200">In-App Notifications</div>
-              <div className="text-xs text-slate-400">
-                Receive notifications inside the top navigation bar for workflow state transitions.
+        {loading ? (
+          <div className="py-8 text-center text-xs text-slate-500">Loading delivery channels...</div>
+        ) : (
+          <div className="space-y-4 pt-2">
+            <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800">
+              <div>
+                <div className="text-sm font-medium text-slate-200">In-App Notifications</div>
+                <div className="text-xs text-slate-400">
+                  Receive notifications inside the top navigation bar for workflow state transitions.
+                </div>
               </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={inAppEnabled}
+                  onChange={(e) => handleToggleInApp(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={inAppEnabled}
-                onChange={(e) => setInAppEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-            </label>
-          </div>
 
-          <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800">
-            <div>
-              <div className="text-sm font-medium text-slate-200">Email Notifications</div>
-              <div className="text-xs text-slate-400">
-                Dispatch transactional email alerts for approvals, postings, and returned vouchers.
+            <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800">
+              <div>
+                <div className="text-sm font-medium text-slate-200">Email Notifications</div>
+                <div className="text-xs text-slate-400">
+                  Dispatch transactional email alerts for approvals, postings, and returned vouchers.
+                </div>
               </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={emailEnabled}
+                  onChange={(e) => handleToggleEmail(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={emailEnabled}
-                onChange={(e) => setEmailEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-            </label>
           </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              type="submit"
-              disabled={saving || loading}
-              className="flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50 transition-colors cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              {saving ? 'Saving Preferences...' : 'Save Preferences'}
-            </button>
-          </div>
-        </form>
+        )}
       </div>
     </div>
   );

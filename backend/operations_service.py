@@ -204,10 +204,53 @@ def get_business_metrics() -> Dict[str, Any]:
     }
 
 
+def _export_postgres_to_sqlite(target_file: Path) -> None:
+    """Export public PostgreSQL tables and rows into an offline SQLite database backup file."""
+    target_conn = sqlite3.connect(str(target_file))
+    try:
+        with database.get_connection() as pg_conn:
+            cur = pg_conn.cursor()
+            cur.execute("""
+                SELECT table_name FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+            """)
+            raw_tables = cur.fetchall()
+            tables = [r[0] if isinstance(r, (list, tuple)) else r["table_name"] for r in raw_tables]
+            for t in tables:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_schema = 'public' AND table_name = %s
+                    ORDER BY ordinal_position
+                """, (t,))
+                raw_cols = cur.fetchall()
+                cols = [r[0] if isinstance(r, (list, tuple)) else r["column_name"] for r in raw_cols]
+                if not cols:
+                    continue
+                col_defs = ', '.join([f'"{c}" TEXT' for c in cols])
+                target_conn.execute(f'CREATE TABLE "{t}" ({col_defs})')
+
+                col_list = '", "'.join(cols)
+                cur.execute(f'SELECT "{col_list}" FROM "{t}"')
+                rows = cur.fetchall()
+                if rows:
+                    placeholders = ', '.join(['?' for _ in cols])
+                    cleaned = []
+                    for row in rows:
+                        if isinstance(row, dict):
+                            cleaned.append(tuple(str(row[c]) if row[c] is not None else None for c in cols))
+                        else:
+                            cleaned.append(tuple(str(v) if v is not None else None for v in row))
+                    target_conn.executemany(f'INSERT INTO "{t}" VALUES ({placeholders})', cleaned)
+        target_conn.commit()
+    finally:
+        target_conn.close()
+
+
 def create_database_backup(destination_dir: Optional[str] = None) -> Dict[str, Any]:
-    """Perform a transactional online backup of the SQLite database.
+    """Perform a transactional online backup of the database.
     
-    Uses SQLite's online backup API for ACID-compliant snapshots without locking readers.
+    If running on PostgreSQL (Supabase), exports all tables and data into a verified SQLite snapshot.
+    If running locally on SQLite, uses SQLite online backup API for ACID-compliant snapshots.
     """
     dest_path = Path(destination_dir) if destination_dir else get_backup_dir()
     dest_path.mkdir(parents=True, exist_ok=True)
@@ -216,17 +259,20 @@ def create_database_backup(destination_dir: Optional[str] = None) -> Dict[str, A
     backup_filename = f"petty_cash_backup_{timestamp_str}.db"
     target_file = dest_path / backup_filename
 
-    # Perform online SQLite backup
-    source_conn = sqlite3.connect(database.DB_PATH)
-    try:
-        target_conn = sqlite3.connect(str(target_file))
+    if database.DATABASE_URL:
+        _export_postgres_to_sqlite(target_file)
+    else:
+        # Perform online SQLite backup
+        source_conn = sqlite3.connect(database.DB_PATH)
         try:
-            with target_conn:
-                source_conn.backup(target_conn)
+            target_conn = sqlite3.connect(str(target_file))
+            try:
+                with target_conn:
+                    source_conn.backup(target_conn)
+            finally:
+                target_conn.close()
         finally:
-            target_conn.close()
-    finally:
-        source_conn.close()
+            source_conn.close()
 
     # Calculate checksum and size
     file_bytes = target_file.read_bytes()
@@ -706,7 +752,7 @@ def acknowledge_alert(rule_id: str, admin_user_id: str) -> Dict[str, Any]:
         user_row = conn.execute(
             f"SELECT id FROM users WHERE id = {marker}", (admin_user_id,)
         ).fetchone() if admin_user_id else None
-        actual_actor_id = user_row[0] if user_row else None
+        actual_actor_id = (user_row["id"] if isinstance(user_row, dict) else user_row[0]) if user_row else None
 
         conn.execute(
             f"""

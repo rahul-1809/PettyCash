@@ -56,6 +56,18 @@ REQUIRED_12_COLUMNS = [
 ]
 
 
+def _scalar(row: Any, default: Any = 0) -> Any:
+    """Safely extract scalar from a single-column query result (works with SQLite tuple/Row and psycopg dict_row)."""
+    if not row:
+        return default
+    if isinstance(row, dict):
+        return next(iter(row.values()), default)
+    try:
+        return row[0]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 def parse_month_bounds(month_str: str) -> Tuple[str, str, int, int]:
     """Parse 'YYYY-MM' into (start_date, end_date, year, month)."""
     match = re.match(r"^(\d{4})-(\d{2})$", (month_str or "").strip())
@@ -95,22 +107,22 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
         ).fetchone()
         if initial_account_balance == 0 and bal_row:
             # Reconcile base initial balance from current balance minus net ledger movements
-            all_receipts = Decimal(str(connection.execute(
+            all_receipts = Decimal(str(_scalar(connection.execute(
                 f"SELECT COALESCE(SUM(amount), 0) FROM ledger_entries WHERE cash_account_id={marker} AND entry_type='RECEIPT' AND is_reversed=0",
                 (cash_account_id,),
-            ).fetchone()[0]))
-            all_payments = Decimal(str(connection.execute(
+            ).fetchone())))
+            all_payments = Decimal(str(_scalar(connection.execute(
                 f"SELECT COALESCE(SUM(amount), 0) FROM ledger_entries WHERE cash_account_id={marker} AND entry_type='PAYMENT' AND is_reversed=0",
                 (cash_account_id,),
-            ).fetchone()[0]))
-            all_adj_in = Decimal(str(connection.execute(
+            ).fetchone())))
+            all_adj_in = Decimal(str(_scalar(connection.execute(
                 f"SELECT COALESCE(SUM(amount), 0) FROM ledger_adjustments WHERE cash_account_id={marker} AND direction='INFLOW'",
                 (cash_account_id,),
-            ).fetchone()[0]))
-            all_adj_out = Decimal(str(connection.execute(
+            ).fetchone())))
+            all_adj_out = Decimal(str(_scalar(connection.execute(
                 f"SELECT COALESCE(SUM(amount), 0) FROM ledger_adjustments WHERE cash_account_id={marker} AND direction='OUTFLOW'",
                 (cash_account_id,),
-            ).fetchone()[0]))
+            ).fetchone())))
             cur_bal = Decimal(str(bal_row["current_balance"]))
             initial_account_balance = cur_bal - (all_receipts + all_adj_in) + (all_payments + all_adj_out)
 
@@ -126,7 +138,7 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
             """,
             (cash_account_id, start_date),
         ).fetchone()
-        prior_receipts = Decimal(str(prior_receipts_row[0]))
+        prior_receipts = Decimal(str(_scalar(prior_receipts_row)))
 
         prior_payments_row = connection.execute(
             f"""
@@ -139,7 +151,7 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
             """,
             (cash_account_id, start_date),
         ).fetchone()
-        prior_payments = Decimal(str(prior_payments_row[0]))
+        prior_payments = Decimal(str(_scalar(prior_payments_row)))
 
         # Prior adjustments
         prior_adj_in_row = connection.execute(
@@ -152,7 +164,7 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
             """,
             (cash_account_id, start_date),
         ).fetchone()
-        prior_adj_in = Decimal(str(prior_adj_in_row[0]))
+        prior_adj_in = Decimal(str(_scalar(prior_adj_in_row)))
 
         prior_adj_out_row = connection.execute(
             f"""
@@ -164,7 +176,7 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
             """,
             (cash_account_id, start_date),
         ).fetchone()
-        prior_adj_out = Decimal(str(prior_adj_out_row[0]))
+        prior_adj_out = Decimal(str(_scalar(prior_adj_out_row)))
 
         opening_balance = initial_account_balance + prior_receipts + prior_adj_in - prior_payments - prior_adj_out
 
