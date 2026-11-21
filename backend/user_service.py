@@ -24,6 +24,9 @@ ROLE_IDS = {
 
 def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
     marker = database._placeholder()
+    normalized_username = username.strip()
+    normalized_email = email.strip().lower()
+
     with database.get_connection() as connection:
         existing = connection.execute(
             f"""
@@ -36,6 +39,15 @@ def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
         if existing:
             raise ValueError("An Admin account already exists.")
 
+        existing_user = connection.execute(
+            f"SELECT username, email FROM users WHERE LOWER(username)=LOWER({marker}) OR LOWER(email)=LOWER({marker})",
+            (normalized_username, normalized_email),
+        ).fetchone()
+        if existing_user:
+            if existing_user["username"].lower() == normalized_username.lower():
+                raise ValueError(f"Username '{normalized_username}' is already in use.")
+            raise ValueError(f"Email '{normalized_email}' is already registered.")
+
         user_id = secrets.token_urlsafe(18)
         password_hash = hash_password(password)
         timestamp = database.now_iso()
@@ -47,8 +59,8 @@ def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
             """,
             (
                 user_id,
-                username.strip(),
-                email.strip().lower(),
+                normalized_username,
+                normalized_email,
                 ROLE_IDS["Admin"],
                 password_hash,
                 timestamp,
@@ -61,42 +73,61 @@ def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
             action="ADMIN_BOOTSTRAPPED",
             entity_type="user",
             entity_id=user_id,
-            after={"username": username.strip(), "email": email.strip().lower(), "role": "Admin"},
+            after={"username": normalized_username, "email": normalized_email, "role": "Admin"},
             correlation_id=user_id,
         )
         connection.commit()
-    return {"id": user_id, "username": username.strip(), "email": email.strip().lower(), "role": "Admin"}
+    return {"id": user_id, "username": normalized_username, "email": normalized_email, "role": "Admin"}
 
 
 def provision_user(username: str, email: str, role: str, actor_user_id: str) -> tuple[dict, str]:
     if role not in {"Manager", "Employee"}:
         raise ValueError("Only Manager or Employee accounts can be provisioned.")
     marker = database._placeholder()
-    user_id = secrets.token_urlsafe(18)
-    timestamp = database.now_iso()
+    normalized_username = username.strip()
+    normalized_email = email.strip().lower()
+
     with database.get_connection() as connection:
-        connection.execute(
-            f"""
-            INSERT INTO users
-                (id, username, email, role_id, created_at, updated_at)
-            VALUES ({marker}, {marker}, {marker}, {marker}, {marker}, {marker})
-            """,
-            (
-                user_id,
-                username.strip(),
-                email.strip().lower(),
-                ROLE_IDS[role],
-                timestamp,
-                timestamp,
-            ),
-        )
+        # Pre-check for duplicate username or email to return clean user-facing error
+        existing = connection.execute(
+            f"SELECT username, email FROM users WHERE LOWER(username)=LOWER({marker}) OR LOWER(email)=LOWER({marker})",
+            (normalized_username, normalized_email),
+        ).fetchone()
+        if existing:
+            if existing["username"].lower() == normalized_username.lower():
+                raise ValueError(f"User with username '{normalized_username}' already exists.")
+            raise ValueError(f"User with email '{normalized_email}' already exists.")
+
+        user_id = secrets.token_urlsafe(18)
+        timestamp = database.now_iso()
+        try:
+            connection.execute(
+                f"""
+                INSERT INTO users
+                    (id, username, email, role_id, created_at, updated_at)
+                VALUES ({marker}, {marker}, {marker}, {marker}, {marker}, {marker})
+                """,
+                (
+                    user_id,
+                    normalized_username,
+                    normalized_email,
+                    ROLE_IDS[role],
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        except Exception as exc:
+            if "unique" in str(exc).lower() or "integrity" in str(exc).lower():
+                raise ValueError(f"A user with username '{normalized_username}' or email '{normalized_email}' already exists.") from exc
+            raise
+
         record_audit_event(
             connection=connection,
             actor_user_id=actor_user_id,
             action="USER_CREATED",
             entity_type="user",
             entity_id=user_id,
-            after={"username": username.strip(), "email": email.strip().lower(), "role": role},
+            after={"username": normalized_username, "email": normalized_email, "role": role},
             correlation_id=user_id,
         )
         connection.commit()
