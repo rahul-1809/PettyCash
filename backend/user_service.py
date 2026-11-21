@@ -81,8 +81,8 @@ def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
 
 
 def provision_user(username: str, email: str, role: str, actor_user_id: str) -> tuple[dict, str]:
-    if role not in {"Manager", "Employee"}:
-        raise ValueError("Only Manager or Employee accounts can be provisioned.")
+    if role not in {"Admin", "Manager", "Employee"}:
+        raise ValueError("Only Admin, Manager, or Employee accounts can be provisioned.")
     marker = database._placeholder()
     normalized_username = username.strip()
     normalized_email = email.strip().lower()
