@@ -1,5 +1,6 @@
 """Monthly financial reporting, 12-column standardized Excel exports, and ZIP bundles."""
 
+import base64
 import calendar
 import datetime
 import io
@@ -222,7 +223,7 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
             files_rows = connection.execute(
                 f"""
                 SELECT s.id, s.request_id, s.storage_key, s.original_filename,
-                       s.size_bytes, s.created_at, u.username AS uploaded_by_username
+                       s.size_bytes, s.created_at, s.file_data, u.username AS uploaded_by_username
                 FROM supporting_files s
                 LEFT JOIN users u ON u.id = s.uploaded_by
                 WHERE s.request_id IN ({placeholders})
@@ -1023,8 +1024,8 @@ h1 {{ font-size: 22px; font-weight: 700; color: #f8fafc; margin: 0 0 6px 0; }}
 .card-header {{ padding: 14px 20px; background: #0b1120; border-bottom: 1px solid #1e293b; font-size: 13px; font-weight: 600; color: #cbd5e1; display: flex; justify-content: space-between; }}
 table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
 th {{ background: #0b1120; color: #94a3b8; text-align: left; padding: 12px 14px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1e293b; }}
-td {{ padding: 12px 14px; border-bottom: 1px solid #1e293b/60; vertical-align: middle; }}
-tr:hover {{ background: #1e293b/40; }}
+td {{ padding: 12px 14px; border-bottom: 1px solid rgba(30, 41, 59, 0.6); vertical-align: middle; }}
+tr:hover {{ background: rgba(30, 41, 59, 0.4); }}
 .btn {{ display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #065f46; color: #a7f3d0; text-decoration: none; border-radius: 4px; font-weight: 600; font-size: 11px; border: 1px solid #047857; }}
 .btn:hover {{ background: #047857; color: #ffffff; }}
 .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
@@ -1103,14 +1104,34 @@ def generate_monthly_zip_bundle(month_str: str) -> io.BytesIO:
                 safe_archive_name = f"{req_id[:8]}_{clean_name}"
                 archive_path = f"supportings/{safe_archive_name}"
 
+                file_bytes = None
                 if file_disk_path.is_file():
-                    archive.writestr(archive_path, file_disk_path.read_bytes())
-                else:
-                    # Create placeholder note if file missing on disk
-                    archive.writestr(
-                        archive_path,
-                        b"%PDF-1.7\n% Supporting file placeholder: source file missing on disk\n"
-                    )
+                    file_bytes = file_disk_path.read_bytes()
+                elif f.get("file_data"):
+                    try:
+                        file_bytes = base64.b64decode(f["file_data"])
+                        file_disk_path.parent.mkdir(parents=True, exist_ok=True)
+                        file_disk_path.write_bytes(file_bytes)
+                    except Exception:
+                        file_bytes = None
+
+                if not file_bytes:
+                    with database.get_connection() as conn:
+                        marker = database._placeholder()
+                        f_row = conn.execute(
+                            f"SELECT file_data FROM supporting_files WHERE id={marker}",
+                            (f["id"],),
+                        ).fetchone()
+                        if f_row and f_row.get("file_data"):
+                            try:
+                                file_bytes = base64.b64decode(f_row["file_data"])
+                                file_disk_path.parent.mkdir(parents=True, exist_ok=True)
+                                file_disk_path.write_bytes(file_bytes)
+                            except Exception:
+                                file_bytes = None
+
+                if file_bytes:
+                    archive.writestr(archive_path, file_bytes)
 
         # 2. Add Excel workbook with relative links pointing to supportings/
         excel_stream = generate_monthly_excel(report_data, relative_supporting_prefix="supportings")

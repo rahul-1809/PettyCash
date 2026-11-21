@@ -1,5 +1,6 @@
 """Private supporting-file storage and access control."""
 
+import base64
 import hashlib
 import os
 import re
@@ -90,14 +91,15 @@ def upload_supporting_file(
             raise ValueError("Supporting files can only be uploaded after approval.")
         timestamp = database.now_iso()
         path.write_bytes(content)
+        b64_content = base64.b64encode(content).decode("ascii")
         try:
             connection.execute(
                 f"""
                 INSERT INTO supporting_files
                     (id, request_id, storage_key, original_filename, content_type,
-                     size_bytes, checksum_sha256, uploaded_by, created_at)
+                     size_bytes, checksum_sha256, uploaded_by, created_at, file_data)
                 VALUES ({marker}, {marker}, {marker}, {marker}, {marker},
-                        {marker}, {marker}, {marker}, {marker})
+                        {marker}, {marker}, {marker}, {marker}, {marker})
                 """,
                 (
                     file_id,
@@ -109,6 +111,7 @@ def upload_supporting_file(
                     checksum,
                     uploader_id,
                     timestamp,
+                    b64_content,
                 ),
             )
             if request["status"] == "APPROVED":
@@ -239,7 +242,30 @@ def get_supporting_file(
 
     path = storage_root() / row["storage_key"]
     if not path.is_file():
-        raise FileNotFoundError("Supporting file is unavailable.")
+        file_bytes = None
+        if row.get("file_data"):
+            try:
+                file_bytes = base64.b64decode(row["file_data"])
+            except Exception:
+                file_bytes = None
+
+        if not file_bytes:
+            with database.get_connection() as conn:
+                f_row = conn.execute(
+                    f"SELECT file_data FROM supporting_files WHERE id={marker}",
+                    (file_id,),
+                ).fetchone()
+                if f_row and f_row.get("file_data"):
+                    try:
+                        file_bytes = base64.b64decode(f_row["file_data"])
+                    except Exception:
+                        file_bytes = None
+
+        if file_bytes:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(file_bytes)
+        else:
+            raise FileNotFoundError("Supporting file is unavailable.")
     record_audit_event(
         actor_user_id=requester_id,
         action="SUPPORTING_FILE_DOWNLOADED",

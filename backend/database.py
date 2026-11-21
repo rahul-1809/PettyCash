@@ -124,6 +124,13 @@ def init_db():
             )
             """
         )
+        try:
+            if DATABASE_URL:
+                conn.execute("ALTER TABLE supporting_files ADD COLUMN IF NOT EXISTS file_data TEXT")
+            else:
+                conn.execute("ALTER TABLE supporting_files ADD COLUMN file_data TEXT")
+        except Exception:
+            pass
         conn.commit()
     seed_system_roles()
     _seed_project_categories()
