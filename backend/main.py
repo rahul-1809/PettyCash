@@ -682,10 +682,18 @@ def create_user(
         if smtp_configured:
             def _async_send_onboarding():
                 try:
+                    app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
                     send_email(
                         user["email"],
                         "PettyCash account setup",
-                        f"Use this one-time setup token to set your password: {onboarding_token}",
+                        f"Hello {user['username']},\n\n"
+                        f"Your PettyCash account has been created.\n\n"
+                        f"One-Time Setup Token: {onboarding_token}\n\n"
+                        f"To set your password and access the system:\n"
+                        f"1. Open {app_url}\n"
+                        f"2. Switch to the 'Invite / Set Password' tab\n"
+                        f"3. Paste your setup token and choose your password\n\n"
+                        f"---\nPettyCash Management",
                         **smtp_values,
                     )
                 except Exception as send_err:
@@ -1461,7 +1469,7 @@ def api_export_monthly_excel(
     selected_month = month or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
     try:
         report_data = get_monthly_report_data(selected_month)
-        base_url = str(request.base_url)
+        base_url = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
         buf = generate_monthly_excel(report_data, web_base_url=base_url)
         filename = f"Petty_Cash_Report_{selected_month.replace('-', '_')}.xlsx"
         record_audit_event(
