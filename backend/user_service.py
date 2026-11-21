@@ -196,8 +196,11 @@ def delete_user(user_id: str, admin_user_id: str) -> dict:
 
         # Delete manager-employee assignments involving this user
         connection.execute(
-            f"DELETE FROM manager_employee_assignments WHERE manager_id = {marker} OR employee_id = {marker}",
-            (user_id, user_id),
+            f"""
+            DELETE FROM manager_employee_assignments
+            WHERE manager_id = {marker} OR employee_id = {marker} OR requested_by = {marker} OR reviewed_by = {marker}
+            """,
+            (user_id, user_id, user_id, user_id),
         )
 
         # Invalidate active sessions & tokens
@@ -225,6 +228,10 @@ def delete_user(user_id: str, admin_user_id: str) -> dict:
             )
             connection.execute(
                 f"DELETE FROM notification_preferences WHERE user_id = {marker}",
+                (user_id,),
+            )
+            connection.execute(
+                f"UPDATE audit_events SET actor_user_id = NULL WHERE actor_user_id = {marker}",
                 (user_id,),
             )
             connection.execute(

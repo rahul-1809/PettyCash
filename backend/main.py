@@ -1,5 +1,6 @@
 import os
 import base64
+import threading
 from typing import List, Dict, Any, Optional
 
 try:
@@ -678,12 +679,19 @@ def create_user(
             req.username, req.email, req.role, admin["id"]
         )
         if smtp_configured:
-            send_email(
-                user["email"],
-                "PettyCash account setup",
-                f"Use this one-time setup token to set your password: {onboarding_token}",
-                **smtp_values,
-            )
+            def _async_send_onboarding():
+                try:
+                    send_email(
+                        user["email"],
+                        "PettyCash account setup",
+                        f"Use this one-time setup token to set your password: {onboarding_token}",
+                        **smtp_values,
+                    )
+                except Exception as send_err:
+                    import logging
+                    logging.getLogger("petty_cash.app").warning(f"Failed to dispatch onboarding email: {send_err}")
+
+            threading.Thread(target=_async_send_onboarding, daemon=True).start()
             token_response = None
         else:
             token_response = onboarding_token
@@ -707,6 +715,8 @@ def delete_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admi
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to delete user: {exc}") from exc
 
 
 @app.post("/api/assignments", tags=["Users & Assignments"], summary="Create manager-employee assignment (Admin)")
