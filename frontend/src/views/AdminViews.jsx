@@ -2315,8 +2315,15 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
 
           {/* Database Backups List */}
           <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
-            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 text-xs font-semibold text-slate-300">
-              Database Online Backups ({backups.length})
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-200">
+                  Available Database Snapshots ({backups.length} Saved)
+                </span>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Transactional snapshots manually initiated by administrators. Backups do not run on an automated timer.
+                </p>
+              </div>
             </div>
             <table className="w-full text-left text-xs text-slate-200">
               <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">

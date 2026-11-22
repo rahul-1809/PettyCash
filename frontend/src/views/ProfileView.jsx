@@ -3,9 +3,18 @@ import { User, Mail, Shield, Bell, Check, Save } from 'lucide-react';
 import { api } from '../api';
 
 export default function ProfileView({ user, addToast }) {
-  const [inAppEnabled, setInAppEnabled] = useState(true);
-  const [emailEnabled, setEmailEnabled] = useState(true);
-  const [loading, setLoading] = useState(true);
+  const getCachedPref = (key, fallback) => {
+    try {
+      const val = localStorage.getItem(`pettycash_pref_${key}`);
+      return val !== null ? JSON.parse(val) : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const [inAppEnabled, setInAppEnabled] = useState(() => getCachedPref('in_app', true));
+  const [emailEnabled, setEmailEnabled] = useState(() => getCachedPref('email', true));
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -13,13 +22,17 @@ export default function ProfileView({ user, addToast }) {
       try {
         const prefs = await api.getNotificationPreferences();
         if (prefs) {
-          setInAppEnabled(Boolean(prefs.in_app_enabled));
-          setEmailEnabled(Boolean(prefs.email_enabled));
+          const inApp = Boolean(prefs.in_app_enabled);
+          const email = Boolean(prefs.email_enabled);
+          setInAppEnabled(inApp);
+          setEmailEnabled(email);
+          try {
+            localStorage.setItem('pettycash_pref_in_app', JSON.stringify(inApp));
+            localStorage.setItem('pettycash_pref_email', JSON.stringify(email));
+          } catch (_) {}
         }
       } catch (e) {
         console.error(e);
-      } finally {
-        setLoading(false);
       }
     }
     loadPrefs();
@@ -27,6 +40,9 @@ export default function ProfileView({ user, addToast }) {
 
   const handleToggleInApp = async (checked) => {
     setInAppEnabled(checked);
+    try {
+      localStorage.setItem('pettycash_pref_in_app', JSON.stringify(checked));
+    } catch (_) {}
     try {
       setSaving(true);
       await api.updateNotificationPreferences(checked, emailEnabled);
@@ -45,6 +61,9 @@ export default function ProfileView({ user, addToast }) {
 
   const handleToggleEmail = async (checked) => {
     setEmailEnabled(checked);
+    try {
+      localStorage.setItem('pettycash_pref_email', JSON.stringify(checked));
+    } catch (_) {}
     try {
       setSaving(true);
       await api.updateNotificationPreferences(inAppEnabled, checked);
@@ -123,15 +142,22 @@ export default function ProfileView({ user, addToast }) {
                   Receive notifications inside the top navigation bar for workflow state transitions.
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={inAppEnabled}
-                  onChange={(e) => handleToggleInApp(e.target.checked)}
-                  className="sr-only peer"
+              <button
+                type="button"
+                role="switch"
+                aria-checked={inAppEnabled}
+                onClick={() => handleToggleInApp(!inAppEnabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  inAppEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                    inAppEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
                 />
-                <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-              </label>
+              </button>
             </div>
 
             <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800">
@@ -141,15 +167,22 @@ export default function ProfileView({ user, addToast }) {
                   Dispatch transactional email alerts for approvals, postings, and returned vouchers.
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={emailEnabled}
-                  onChange={(e) => handleToggleEmail(e.target.checked)}
-                  className="sr-only peer"
+              <button
+                type="button"
+                role="switch"
+                aria-checked={emailEnabled}
+                onClick={() => handleToggleEmail(!emailEnabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  emailEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                    emailEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
                 />
-                <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-              </label>
+              </button>
             </div>
           </div>
         )}

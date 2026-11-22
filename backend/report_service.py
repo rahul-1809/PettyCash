@@ -1002,6 +1002,8 @@ def _generate_evidence_html(report_data: dict) -> str:
         </tr>
         """)
 
+    tbody_content = "".join(rows_html) if rows_html else '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #94a3b8; font-size: 13px;">No posted transactions found for this reporting period.</td></tr>'
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1064,7 +1066,7 @@ tr:hover {{ background: rgba(30, 41, 59, 0.4); }}
                 </tr>
             </thead>
             <tbody>
-                {"".join(rows_html)}
+                {tbody_content}
             </tbody>
         </table>
     </div>

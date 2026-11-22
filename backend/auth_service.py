@@ -16,12 +16,12 @@ except ImportError:
     from audit_service import record_audit_event
 
 
-SESSION_TTL = timedelta(hours=8)
+SESSION_TTL = timedelta(days=30)
 ONBOARDING_TTL = timedelta(hours=24)
 
 # In-memory session cache: token_hash -> (user_info, expires_at_dt, cached_at_monotonic)
 _AUTH_CACHE = {}
-_AUTH_CACHE_TTL = 30.0  # seconds
+_AUTH_CACHE_TTL = 60.0  # seconds
 
 
 def clear_auth_cache(token_hash: Optional[str] = None) -> None:
@@ -155,6 +155,20 @@ def get_authenticated_user(raw_token: str) -> Optional[dict]:
     exp_dt = parse_timestamp(row["expires_at"])
     if exp_dt <= now_utc:
         return None
+
+    # Rolling extension: If session has less than 15 days remaining, automatically extend it
+    if (exp_dt - now_utc) < timedelta(days=15):
+        try:
+            new_exp = expiry(SESSION_TTL)
+            with database.get_connection() as conn:
+                conn.execute(
+                    f"UPDATE user_sessions SET expires_at={marker} WHERE token_hash={marker} AND revoked_at IS NULL",
+                    (new_exp, th),
+                )
+                conn.commit()
+            exp_dt = parse_timestamp(new_exp)
+        except Exception:
+            pass
 
     user_info = {
         "id": row["id"],
