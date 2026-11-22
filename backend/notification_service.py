@@ -2,9 +2,11 @@
 
 import logging
 import os
+import queue
 import secrets
 import smtplib
 import threading
+import time
 from email.message import EmailMessage
 from typing import Iterable, Optional
 
@@ -15,59 +17,115 @@ try:
 except ImportError:
     import database
 
+# ── Serialized Background Email Queue & Worker ──────────────────────────────
+# Protects against Gmail SMTP concurrent connection limits (HTTP 421)
+# and ensures retry with exponential backoff if temporary delivery fails.
 
-def _send_notification_email_async(user_id: str, title: str, message: str) -> None:
-    try:
-        marker = database._placeholder()
-        with database.get_connection() as connection:
-            user_row = connection.execute(
-                f"""
-                SELECT u.email, u.username, np.email_enabled
-                FROM users u
-                LEFT JOIN notification_preferences np ON np.user_id = u.id
-                WHERE u.id = {marker}
-                """,
-                (user_id,),
-            ).fetchone()
-            if not user_row or not user_row["email"]:
-                return
-            if user_row["email_enabled"] is not None and not user_row["email_enabled"]:
-                logger.info(f"Notification email skipped for user {user_id}: email_enabled is 0 in preferences")
-                return
-            recipient_email = user_row["email"]
-            recipient_name = user_row["username"] or "User"
+_EMAIL_QUEUE: queue.Queue = queue.Queue()
+_WORKER_STARTED = False
+_WORKER_LOCK = threading.Lock()
 
-        host = os.getenv("SMTP_HOST")
-        port_raw = os.getenv("SMTP_PORT", "587")
-        port = int(port_raw) if port_raw and str(port_raw).isdigit() else 587
-        username = os.getenv("SMTP_USERNAME")
-        password = os.getenv("SMTP_PASSWORD")
-        sender = os.getenv("SMTP_SENDER")
 
-        if not all((host, username, password, sender)):
-            logger.warning(f"SMTP configuration incomplete; cannot dispatch notification email to {recipient_email}")
-            return
+def _email_worker() -> None:
+    """Sequential daemon worker that processes transactional emails one at a time."""
+    logger.info("PettyCash Email Worker thread started.")
+    while True:
+        try:
+            item = _EMAIL_QUEUE.get()
+            if item is None:
+                break
+            recipient_email, subject, body = item
+            _send_email_with_retry(recipient_email, subject, body, max_retries=3)
+            _EMAIL_QUEUE.task_done()
+            time.sleep(0.5)  # Safe delay between messages to respect SMTP provider limits
+        except Exception as exc:
+            logger.error(f"Unexpected error in email worker: {exc}", exc_info=True)
 
-        app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
-        body = (
-            f"Hello {recipient_name},\n\n"
-            f"{message}\n\n"
-            f"Log in to PettyCash Pro to view and take action: {app_url}\n\n"
-            f"---\nPettyCash Notification System"
-        )
-        send_email(
-            recipient=recipient_email,
-            subject=f"PettyCash: {title}",
-            body=body,
-            host=host,
-            port=port,
-            username=username,
-            password=password,
-            sender=sender,
-        )
-        logger.info(f"Dispatched email notification '{title}' to {recipient_email}")
-    except Exception as exc:
-        logger.error(f"Failed to dispatch email notification to user {user_id}: {exc}", exc_info=True)
+
+def _ensure_worker_started() -> None:
+    global _WORKER_STARTED
+    if not _WORKER_STARTED:
+        with _WORKER_LOCK:
+            if not _WORKER_STARTED:
+                worker_thread = threading.Thread(target=_email_worker, daemon=True, name="pettycash-email-worker")
+                worker_thread.start()
+                _WORKER_STARTED = True
+
+
+def _send_email_with_retry(recipient_email: str, subject: str, body: str, max_retries: int = 3) -> bool:
+    host = os.getenv("SMTP_HOST")
+    port_raw = os.getenv("SMTP_PORT", "587")
+    port = int(port_raw) if port_raw and str(port_raw).isdigit() else 587
+    username = os.getenv("SMTP_USERNAME")
+    password = os.getenv("SMTP_PASSWORD")
+    sender = os.getenv("SMTP_SENDER")
+
+    if not all((host, username, password, sender)):
+        logger.warning(f"SMTP configuration incomplete; skipping dispatch to {recipient_email}")
+        return False
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            send_email(
+                recipient=recipient_email,
+                subject=subject,
+                body=body,
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                sender=sender,
+            )
+            logger.info(f"Successfully dispatched email '{subject}' to {recipient_email} (attempt {attempt})")
+            return True
+        except Exception as exc:
+            logger.warning(f"Email delivery attempt {attempt}/{max_retries} failed for {recipient_email}: {exc}")
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+            else:
+                logger.error(f"Exhausted all {max_retries} retries sending email to {recipient_email}: {exc}", exc_info=True)
+    return False
+
+
+def enqueue_email(recipient_email: str, subject: str, body: str) -> None:
+    """Enqueue an email for guaranteed serialized asynchronous delivery."""
+    if not recipient_email or not recipient_email.strip():
+        return
+    _ensure_worker_started()
+    _EMAIL_QUEUE.put((recipient_email.strip(), subject, body))
+
+
+def send_test_email(recipient_email: str, recipient_name: str = "User") -> None:
+    """Synchronously send a test email to verify credentials and SMTP routing."""
+    host = os.getenv("SMTP_HOST")
+    port_raw = os.getenv("SMTP_PORT", "587")
+    port = int(port_raw) if port_raw and str(port_raw).isdigit() else 587
+    username = os.getenv("SMTP_USERNAME")
+    password = os.getenv("SMTP_PASSWORD")
+    sender = os.getenv("SMTP_SENDER")
+
+    if not all((host, username, password, sender)):
+        raise RuntimeError("SMTP configuration is incomplete. Check SMTP_HOST, SMTP_PORT, SMTP_USERNAME, and SMTP_PASSWORD.")
+
+    app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
+    subject = "PettyCash Pro - Notification Delivery Test"
+    body = (
+        f"Hello {recipient_name},\n\n"
+        f"This is a confirmation test email from PettyCash Pro.\n"
+        f"Your transactional email notification channel is actively connected and functioning properly.\n\n"
+        f"System URL: {app_url}\n\n"
+        f"---\nPettyCash Notification System"
+    )
+    send_email(
+        recipient=recipient_email,
+        subject=subject,
+        body=body,
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        sender=sender,
+    )
 
 
 def ensure_preferences(user_id: str) -> None:
@@ -93,9 +151,15 @@ def create_notification(
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
 ) -> dict:
+    """Create in-app notification and reliably enqueue email delivery if enabled."""
     ensure_preferences(user_id)
     notification_id = secrets.token_urlsafe(18)
     marker = database._placeholder()
+
+    recipient_email = None
+    recipient_name = "User"
+    email_enabled = True
+
     with database.get_connection() as connection:
         connection.execute(
             f"""
@@ -114,17 +178,35 @@ def create_notification(
                 database.now_iso(),
             ),
         )
+        user_row = connection.execute(
+            f"""
+            SELECT u.email, u.username, np.email_enabled
+            FROM users u
+            LEFT JOIN notification_preferences np ON np.user_id = u.id
+            WHERE u.id = {marker}
+            """,
+            (user_id,),
+        ).fetchone()
+        if user_row:
+            recipient_email = user_row["email"]
+            recipient_name = user_row["username"] or "User"
+            if user_row["email_enabled"] is not None:
+                email_enabled = bool(user_row["email_enabled"])
         connection.commit()
 
+    # Deliver via background queue if email is configured and enabled by user
     if not os.getenv("PYTEST_CURRENT_TEST") and not os.getenv("TESTING"):
-        try:
-            threading.Thread(
-                target=_send_notification_email_async,
-                args=(user_id, title, message),
-                daemon=True,
-            ).start()
-        except Exception as exc:
-            logger.warning(f"Failed to spawn email thread: {exc}")
+        if recipient_email and email_enabled:
+            app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
+            body = (
+                f"Hello {recipient_name},\n\n"
+                f"{message}\n\n"
+                f"Log in to PettyCash Pro to view and take action: {app_url}\n\n"
+                f"---\nPettyCash Notification System"
+            )
+            enqueue_email(recipient_email, f"PettyCash: {title}", body)
+        elif not email_enabled:
+            logger.info(f"Notification email skipped for user {user_id}: email_enabled is 0 in preferences")
 
     return {"id": notification_id, "user_id": user_id, "event_type": event_type}
 
@@ -245,7 +327,14 @@ def send_email(
     message["To"] = recipient
     message["Subject"] = subject
     message.set_content(body)
-    with smtplib.SMTP(host, port, timeout=10) as smtp:
-        smtp.starttls()
-        smtp.login(username, password)
-        smtp.send_message(message)
+
+    # Use SMTP_SSL for port 465, or SMTP with STARTTLS for port 587/25
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
+            smtp.login(username, password)
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=20) as smtp:
+            smtp.starttls()
+            smtp.login(username, password)
+            smtp.send_message(message)

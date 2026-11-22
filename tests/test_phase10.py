@@ -414,6 +414,30 @@ class Phase10Tests(unittest.TestCase):
         zf2 = zipfile.ZipFile(io.BytesIO(export_zip_res.content))
         self.assertIn("evidence_viewer.html", zf2.namelist())
 
+    def test_09_email_queue_and_test_email_endpoint(self):
+        """Test serialized email queue enqueueing and test-email endpoint."""
+        from unittest.mock import patch
+        from backend.notification_service import enqueue_email, send_test_email
+
+        # 1. Test enqueue_email
+        enqueue_email("test@example.com", "Subject", "Body")
+
+        # 2. Test send_test_email mocking send_email
+        with patch("backend.notification_service.send_email") as mock_send:
+            send_test_email("user@example.com", "Test User")
+            self.assertTrue(mock_send.called)
+            call_kwargs = mock_send.call_args[1]
+            self.assertEqual(call_kwargs["recipient"], "user@example.com")
+            self.assertIn("PettyCash Pro - Notification Delivery Test", call_kwargs["subject"])
+
+        # 3. Test POST /api/notifications/test-email endpoint
+        headers = {"Authorization": f"Bearer {self.admin_token}"}
+        with patch("backend.main.send_test_email") as mock_endpoint_send:
+            res = self.client.post("/api/notifications/test-email", headers=headers)
+            self.assertEqual(res.status_code, 200)
+            self.assertTrue(res.json()["success"])
+            self.assertEqual(res.json()["recipient"], self.admin["email"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,6 +46,8 @@ try:
         mark_all_notifications_read,
         update_preferences,
         send_email,
+        send_test_email,
+        enqueue_email,
     )
     from backend.user_service import (
         create_assignment,
@@ -152,6 +154,8 @@ except ImportError:
         mark_all_notifications_read,
         update_preferences,
         send_email,
+        send_test_email,
+        enqueue_email,
     )
     from user_service import (
         create_assignment,
@@ -689,27 +693,18 @@ def create_user(
             req.username, req.email, req.role, admin["id"]
         )
         if smtp_configured:
-            def _async_send_onboarding():
-                try:
-                    app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
-                    send_email(
-                        user["email"],
-                        "PettyCash account setup",
-                        f"Hello {user['username']},\n\n"
-                        f"Your PettyCash account has been created.\n\n"
-                        f"One-Time Setup Token: {onboarding_token}\n\n"
-                        f"To set your password and access the system:\n"
-                        f"1. Open {app_url}\n"
-                        f"2. Switch to the 'Invite / Set Password' tab\n"
-                        f"3. Paste your setup token and choose your password\n\n"
-                        f"---\nPettyCash Management",
-                        **smtp_values,
-                    )
-                except Exception as send_err:
-                    import logging
-                    logging.getLogger("petty_cash.app").warning(f"Failed to dispatch onboarding email: {send_err}")
-
-            threading.Thread(target=_async_send_onboarding, daemon=True).start()
+            app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
+            onboarding_body = (
+                f"Hello {user['username']},\n\n"
+                f"Your PettyCash account has been created.\n\n"
+                f"One-Time Setup Token: {onboarding_token}\n\n"
+                f"To set your password and access the system:\n"
+                f"1. Open {app_url}\n"
+                f"2. Switch to the 'Invite / Set Password' tab\n"
+                f"3. Paste your setup token and choose your password\n\n"
+                f"---\nPettyCash Management"
+            )
+            enqueue_email(user["email"], "PettyCash account setup", onboarding_body)
 
         # Always return onboarding_token so Admin can view/share it directly
         return {**user, "onboarding_token": onboarding_token}
@@ -818,6 +813,15 @@ def put_notification_preferences(
     user: dict = Depends(current_user),
 ):
     return update_preferences(user["id"], req.in_app_enabled, req.email_enabled)
+
+
+@app.post("/api/notifications/test-email", tags=["Notification Preferences"], summary="Send a test notification email")
+def post_test_email(user: dict = Depends(current_user)):
+    try:
+        send_test_email(user["email"], user.get("username", "User"))
+        return {"success": True, "recipient": user["email"]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─── Admin Master Data and Cash Accounts ─────────────────────────────────────

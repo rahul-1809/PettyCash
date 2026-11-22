@@ -320,6 +320,8 @@ export const api = {
       method: 'PUT',
       body: { in_app_enabled, email_enabled },
     }),
+  sendTestEmail: () =>
+    request('/notifications/test-email', { method: 'POST' }),
 
   // ── Spreadsheet Sessions (Compatibility Utility)
   getDefaultData: () => request('/default-data'),

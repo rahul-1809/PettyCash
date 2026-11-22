@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, Shield, Bell, Check, Save } from 'lucide-react';
+import { User, Mail, Shield, Bell, Check, Save, Send, Loader2 } from 'lucide-react';
 import { api } from '../api';
 
 export default function ProfileView({ user, addToast }) {
   const getCachedPref = (key, fallback) => {
     try {
-      const val = localStorage.getItem(`pettycash_pref_${key}`);
+      const uId = user?.id || 'anon';
+      const val = localStorage.getItem(`pettycash_pref_${uId}_${key}`);
       return val !== null ? JSON.parse(val) : fallback;
     } catch {
       return fallback;
@@ -14,12 +15,14 @@ export default function ProfileView({ user, addToast }) {
 
   const [inAppEnabled, setInAppEnabled] = useState(() => getCachedPref('in_app', true));
   const [emailEnabled, setEmailEnabled] = useState(() => getCachedPref('email', true));
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testingEmail, setTestingEmail] = useState(false);
 
   useEffect(() => {
     async function loadPrefs() {
       try {
+        setLoading(true);
         const prefs = await api.getNotificationPreferences();
         if (prefs) {
           const inApp = Boolean(prefs.in_app_enabled);
@@ -27,21 +30,27 @@ export default function ProfileView({ user, addToast }) {
           setInAppEnabled(inApp);
           setEmailEnabled(email);
           try {
-            localStorage.setItem('pettycash_pref_in_app', JSON.stringify(inApp));
-            localStorage.setItem('pettycash_pref_email', JSON.stringify(email));
+            const uId = user?.id || 'anon';
+            localStorage.setItem(`pettycash_pref_${uId}_in_app`, JSON.stringify(inApp));
+            localStorage.setItem(`pettycash_pref_${uId}_email`, JSON.stringify(email));
           } catch (_) {}
         }
       } catch (e) {
         console.error(e);
+      } finally {
+        setLoading(false);
       }
     }
-    loadPrefs();
-  }, []);
+    if (user?.id) {
+      loadPrefs();
+    }
+  }, [user?.id]);
 
   const handleToggleInApp = async (checked) => {
     setInAppEnabled(checked);
     try {
-      localStorage.setItem('pettycash_pref_in_app', JSON.stringify(checked));
+      const uId = user?.id || 'anon';
+      localStorage.setItem(`pettycash_pref_${uId}_in_app`, JSON.stringify(checked));
     } catch (_) {}
     try {
       setSaving(true);
@@ -62,7 +71,8 @@ export default function ProfileView({ user, addToast }) {
   const handleToggleEmail = async (checked) => {
     setEmailEnabled(checked);
     try {
-      localStorage.setItem('pettycash_pref_email', JSON.stringify(checked));
+      const uId = user?.id || 'anon';
+      localStorage.setItem(`pettycash_pref_${uId}_email`, JSON.stringify(checked));
     } catch (_) {}
     try {
       setSaving(true);
@@ -77,6 +87,26 @@ export default function ProfileView({ user, addToast }) {
       addToast({ type: 'error', message: err.message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSendTestEmail = async () => {
+    try {
+      setTestingEmail(true);
+      const res = await api.sendTestEmail();
+      addToast({
+        type: 'success',
+        title: 'Test Email Dispatched',
+        message: `A test email has been sent to ${res.recipient || user?.email}. Please check your inbox.`,
+      });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Email Delivery Failed',
+        message: err.message || 'Could not dispatch test email. Please check server SMTP configuration.',
+      });
+    } finally {
+      setTestingEmail(false);
     }
   };
 
@@ -132,7 +162,10 @@ export default function ProfileView({ user, addToast }) {
         </div>
 
         {loading ? (
-          <div className="py-8 text-center text-xs text-slate-500">Loading delivery channels...</div>
+          <div className="py-8 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
+            <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+            <span>Loading delivery channels...</span>
+          </div>
         ) : (
           <div className="space-y-4 pt-2">
             <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800 gap-4">
@@ -182,6 +215,34 @@ export default function ProfileView({ user, addToast }) {
                     emailEnabled ? 'translate-x-5' : 'translate-x-0'
                   }`}
                 />
+              </button>
+            </div>
+
+            {/* Test Email Action Row */}
+            <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-medium text-slate-300">Verify Email Delivery</div>
+                <div className="text-[11px] text-slate-500">
+                  Send a test email to <span className="text-slate-300 font-mono">{user?.email}</span> to verify SMTP configuration.
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={testingEmail || !emailEnabled}
+                onClick={handleSendTestEmail}
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {testingEmail ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                    <span>Sending...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Send Test Email</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
