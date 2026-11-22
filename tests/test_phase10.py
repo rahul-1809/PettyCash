@@ -329,6 +329,91 @@ class Phase10Tests(unittest.TestCase):
         self.assertEqual(len(approved), 1)
         self.assertEqual(approved[0]["employee_username"], "employee")
 
+    def test_08_spreadsheet_zip_bundle_and_session_optimization(self):
+        """Test spreadsheet session ZIP bundle export and payload optimization."""
+        import zipfile
+        import io
+
+        # 1. Create a session with sample transactions including base64 supportings
+        sample_txs = [
+            {
+                "id": "tx-zip-1",
+                "date": "2026-10-05",
+                "ledger": "Office Supplies",
+                "memo": "Printer ink & stationery",
+                "receipt": 0,
+                "payment": 1500.0,
+                "balance": -1500.0,
+                "project": "HQ Admin",
+                "status": "APPROVED",
+                "supportings": [
+                    {
+                        "name": "receipt_1.txt",
+                        "data": "VGhpcyBpcyBhIHRlc3QgcmVjZWlwdCBmaWxlLg==", # "This is a test receipt file."
+                        "type": "text/plain",
+                    }
+                ],
+            }
+        ]
+        create_res = self.client.post(
+            "/api/sessions",
+            json={
+                "name": "Audit Ready Oct 2026",
+                "opening_balance": 5000.0,
+                "start_date": "2026-10-01",
+                "end_date": "2026-10-31",
+                "transactions": sample_txs,
+                "source_excel_base64": "U0FNUExFX0VYQ0VMX0RBVEE=",
+                "source_excel_filename": "source.xlsx",
+            },
+        )
+        self.assertEqual(create_res.status_code, 200)
+        session_id = create_res.json()["id"]
+
+        # 2. Test lightweight get session (excludes huge source_excel_base64)
+        get_res = self.client.get(f"/api/sessions/{session_id}")
+        self.assertEqual(get_res.status_code, 200)
+        self.assertNotIn("source_excel_base64", get_res.json())
+
+        # Include raw includes it
+        get_raw_res = self.client.get(f"/api/sessions/{session_id}?include_raw=true")
+        self.assertEqual(get_raw_res.status_code, 200)
+        self.assertEqual(get_raw_res.json().get("source_excel_base64"), "U0FNUExFX0VYQ0VMX0RBVEE=")
+
+        # 3. Test GET /api/sessions/{session_id}/zip
+        zip_res = self.client.get(f"/api/sessions/{session_id}/zip")
+        self.assertEqual(zip_res.status_code, 200)
+        self.assertEqual(zip_res.headers.get("content-type"), "application/zip")
+        self.assertIn("Audit_Ready_Oct_2026_Bundle.zip", zip_res.headers.get("content-disposition", ""))
+
+        zf = zipfile.ZipFile(io.BytesIO(zip_res.content))
+        names = zf.namelist()
+        self.assertTrue(any(n.endswith(".xlsx") for n in names))
+        self.assertIn("evidence_viewer.html", names)
+        self.assertTrue(any(n.startswith("supportings/") for n in names))
+
+        # Check evidence viewer content
+        viewer_html = zf.read("evidence_viewer.html").decode("utf-8")
+        self.assertIn("Audit Ready Oct 2026", viewer_html)
+        self.assertIn("Printer ink &amp; stationery", viewer_html)
+        self.assertIn("receipt_1.txt", viewer_html)
+
+        # 4. Test POST /api/export-zip for on-the-fly export
+        export_zip_res = self.client.post(
+            "/api/export-zip",
+            json={
+                "name": "Live State Bundle",
+                "opening_balance": 1000.0,
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-15",
+                "transactions": sample_txs,
+            },
+        )
+        self.assertEqual(export_zip_res.status_code, 200)
+        self.assertEqual(export_zip_res.headers.get("content-type"), "application/zip")
+        zf2 = zipfile.ZipFile(io.BytesIO(export_zip_res.content))
+        self.assertIn("evidence_viewer.html", zf2.namelist())
+
 
 if __name__ == "__main__":
     unittest.main()

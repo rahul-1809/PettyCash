@@ -337,4 +337,6 @@ export const api = {
   deleteSpreadsheetSession: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),
   exportDrilldown: (data) => request('/export-drilldown', { method: 'POST', body: data }),
   exportFullExcel: (data) => request('/export', { method: 'POST', body: data }),
+  exportSpreadsheetZip: (data) => request('/export-zip', { method: 'POST', body: data }),
+  getSessionZipUrl: (id) => `${API_BASE}/sessions/${id}/zip`,
 };

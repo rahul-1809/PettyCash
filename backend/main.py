@@ -1,4 +1,5 @@
 import os
+import re
 import base64
 import threading
 from typing import List, Dict, Any, Optional
@@ -20,7 +21,10 @@ from pydantic import BaseModel, Field
 
 try:
     from backend import database
-    from backend.excel_service import parse_petty_cash_file, recalculate_summary, generate_styled_excel, generate_drilldown_excel
+    from backend.excel_service import (
+        parse_petty_cash_file, recalculate_summary, generate_styled_excel,
+        generate_drilldown_excel, generate_session_zip_bundle,
+    )
     from backend.database import (
         init_db, list_sessions, create_session, get_session, update_session,
         rename_session, delete_session, list_project_categories,
@@ -124,7 +128,10 @@ try:
     )
 except ImportError:
     import database
-    from excel_service import parse_petty_cash_file, recalculate_summary, generate_styled_excel, generate_drilldown_excel
+    from excel_service import (
+        parse_petty_cash_file, recalculate_summary, generate_styled_excel,
+        generate_drilldown_excel, generate_session_zip_bundle,
+    )
     from database import (
         init_db, list_sessions, create_session, get_session, update_session,
         rename_session, delete_session, list_project_categories,
@@ -1873,11 +1880,14 @@ def api_create_session(req: SaveSessionRequest):
 
 
 @app.get("/api/sessions/{session_id}", tags=["Spreadsheet Sessions"], summary="Get spreadsheet session")
-def api_get_session(session_id: str):
-    """Load a session's full data (transactions + summary)."""
+def api_get_session(session_id: str, include_raw: bool = False):
+    """Load a session's full data (transactions + summary). Excludes heavy source excel base64 unless requested."""
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
+    data = dict(session.get("data") or {})
+    if not include_raw:
+        data.pop("source_excel_base64", None)
     return {
         "id": session["id"],
         "name": session["name"],
@@ -1887,8 +1897,38 @@ def api_get_session(session_id: str):
         "start_date": session["start_date"],
         "end_date": session["end_date"],
         "tx_count": session["tx_count"],
-        **session["data"],   # expands: transactions, summary
+        **data,
     }
+
+
+@app.get("/api/sessions/{session_id}/zip", tags=["Spreadsheet Sessions"], summary="Export spreadsheet session as ZIP bundle")
+def api_export_session_zip(session_id: str):
+    """Export spreadsheet session as a complete ZIP bundle containing the styled workbook,
+    offline HTML evidence viewer, and all attached voucher documents."""
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    data = session.get("data") or {}
+    tx_dicts = data.get("transactions") or []
+    summary = data.get("summary")
+    try:
+        zip_buf = generate_session_zip_bundle(
+            opening_balance=session["opening_balance"],
+            start_date=session["start_date"],
+            end_date=session["end_date"],
+            transactions=tx_dicts,
+            session_name=session.get("name"),
+            summary=summary,
+        )
+        clean_name = re.sub(r"[^A-Za-z0-9._-]", "_", session.get("name", "Session")).strip("_")
+        filename = f"{clean_name}_Bundle.zip"
+        return StreamingResponse(
+            zip_buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate session ZIP bundle: {str(e)}")
 
 
 @app.put("/api/sessions/{session_id}", tags=["Spreadsheet Sessions"], summary="Update spreadsheet session")
@@ -1986,6 +2026,29 @@ def export_excel(req: RecalculateRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
+
+
+@app.post("/api/export-zip", tags=["Spreadsheet Sessions"], summary="Export spreadsheet state as ZIP bundle")
+def export_state_zip(req: SaveSessionRequest):
+    """Export current on-screen spreadsheet state as a complete ZIP bundle."""
+    try:
+        tx_dicts = [tx.model_dump() for tx in req.transactions]
+        zip_buf = generate_session_zip_bundle(
+            opening_balance=req.opening_balance,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            transactions=tx_dicts,
+            session_name=req.name or f"Petty_Cash_{req.start_date}_to_{req.end_date}",
+        )
+        clean_name = re.sub(r"[^A-Za-z0-9._-]", "_", req.name or f"Petty_Cash_{req.start_date}_to_{req.end_date}").strip("_")
+        filename = f"{clean_name}_Bundle.zip"
+        return StreamingResponse(
+            zip_buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export ZIP error: {str(e)}")
 
 
 # ─── Serve Frontend ───────────────────────────────────────────────────────────

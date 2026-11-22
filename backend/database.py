@@ -350,6 +350,14 @@ def update_session(
     source_excel_base64: Optional[str] = None,
     source_excel_filename: Optional[str] = None,
 ) -> Optional[dict]:
+    existing = get_session(session_id)
+    if existing and existing.get("data"):
+        old_data = existing["data"]
+        if source_excel_base64 is None:
+            source_excel_base64 = old_data.get("source_excel_base64")
+        if source_excel_filename is None:
+            source_excel_filename = old_data.get("source_excel_filename")
+
     ts = now_iso()
     tx_count = len(transactions)
     data_blob = {

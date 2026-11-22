@@ -4,8 +4,10 @@ import {
   FileSpreadsheet, Calendar, IndianRupee, TrendingUp,
   TrendingDown, PieChart, Table, CheckCircle2, AlertCircle,
   X, ExternalLink, Eye, FileDown, History, Save, FolderOpen,
-  Clock, ChevronRight, ChevronLeft, Pencil, RefreshCw, FilePlus2
+  Clock, ChevronRight, ChevronLeft, Pencil, RefreshCw, FilePlus2,
+  Archive,
 } from 'lucide-react';
+import TablePagination from './TablePagination';
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
@@ -105,6 +107,9 @@ export default function SpreadsheetTool() {
   const [currentEditTx, setCurrentEditTx] = useState(null);
   const [toast, setToast] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingZip, setIsExportingZip] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const fileInputRef = useRef(null);
 
   const initialTxForm = {
@@ -171,11 +176,14 @@ export default function SpreadsheetTool() {
 
   useEffect(() => {
     (async () => {
-      await fetchSessions();
-      await fetchProjectCategories();
+      await Promise.all([fetchSessions(), fetchProjectCategories()]);
       setLoading(false);
     })();
-  }, []);
+  }, [fetchSessions, fetchProjectCategories]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedProject, selectedLedger]);
 
   const loadDefaultData = async () => {
     setLoading(true);
@@ -265,6 +273,7 @@ export default function SpreadsheetTool() {
       setActiveSessionId(data.id);
       setActiveSessionName(data.name);
       setHasUnsavedChanges(false);
+      setCurrentPage(1);
       showToast(`Loaded: "${data.name}"`);
     } catch (err) {
       showToast(err.message, 'error');
@@ -460,6 +469,43 @@ export default function SpreadsheetTool() {
     } finally { setIsExporting(false); }
   };
 
+  const handleExportZip = async (sessionId = null, sessionName = null) => {
+    setIsExportingZip(true);
+    try {
+      const targetId = sessionId || activeSessionId;
+      let res;
+      if (targetId && (!sessionId || !hasUnsavedChanges)) {
+        res = await fetch(`/api/sessions/${targetId}/zip`);
+      } else {
+        res = await fetch('/api/export-zip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: sessionName || activeSessionName || `Petty Cash ${startDate} – ${endDate}`,
+            opening_balance: openingBalance,
+            start_date: startDate,
+            end_date: endDate,
+            transactions,
+          }),
+        });
+      }
+      if (!res.ok) throw new Error('ZIP Export failed');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const namePart = (sessionName || activeSessionName || `Petty_Cash_${startDate}_to_${endDate}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+      a.download = `${namePart}_Bundle.zip`;
+      document.body.appendChild(a); a.click();
+      window.URL.revokeObjectURL(url); a.remove();
+      showToast('ZIP Bundle downloaded!');
+    } catch (err) {
+      showToast('ZIP Export failed: ' + err.message, 'error');
+    } finally {
+      setIsExportingZip(false);
+    }
+  };
+
   // ─── Drilldown ────────────────────────────────────────────────────────────
 
   const openDrilldown = (project, type, amount) => {
@@ -568,6 +614,11 @@ export default function SpreadsheetTool() {
     return matchSearch && (selectedProject === 'ALL' || t.project === selectedProject) && (selectedLedger === 'ALL' || t.ledger === selectedLedger);
   }), [sortedTransactions, searchTerm, selectedProject, selectedLedger]);
 
+  const paginatedTransactions = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredTransactions.slice(start, start + pageSize);
+  }, [filteredTransactions, currentPage, pageSize]);
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -647,6 +698,16 @@ export default function SpreadsheetTool() {
               <Download className={`w-3.5 h-3.5 ${isExporting ? 'animate-bounce' : ''}`} />
               {isExporting ? 'Generating…' : 'Download Excel'}
             </button>
+
+            <button
+              onClick={() => handleExportZip()}
+              disabled={isExportingZip || transactions.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 text-xs font-semibold rounded-md border border-emerald-700/80 shadow-sm transition disabled:opacity-40 cursor-pointer"
+              title="Download complete audit bundle: styled Excel workbook, offline interactive HTML evidence viewer, and all attached voucher documents"
+            >
+              <Archive className={`w-3.5 h-3.5 ${isExportingZip ? 'animate-spin' : ''}`} />
+              {isExportingZip ? 'Packaging ZIP…' : 'Download ZIP Bundle'}
+            </button>
           </div>
         </div>
       </header>
@@ -719,6 +780,11 @@ export default function SpreadsheetTool() {
                   </div>
                   {/* Actions: appear on hover */}
                   <div className="hidden group-hover:flex items-center gap-1 absolute right-2 top-2.5">
+                    <button
+                      onClick={e => { e.stopPropagation(); handleExportZip(sess.id, sess.name); }}
+                      className="p-1 rounded hover:bg-emerald-950 text-slate-400 hover:text-emerald-400 cursor-pointer"
+                      title="Download Session ZIP Bundle"
+                    ><Archive className="w-3 h-3" /></button>
                     <button
                       onClick={e => { e.stopPropagation(); setRenameSessionId(sess.id); setRenameValue(sess.name); }}
                       className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-200 cursor-pointer"
@@ -861,9 +927,9 @@ export default function SpreadsheetTool() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
-                    {filteredTransactions.length === 0 ? (
+                    {paginatedTransactions.length === 0 ? (
                       <tr><td colSpan={14} className="py-12 text-center text-slate-500 font-sans">No transactions match filters.</td></tr>
-                    ) : filteredTransactions.map((tx, idx) => (
+                    ) : paginatedTransactions.map((tx, idx) => (
                       <tr key={tx.id || idx} className="hover:bg-slate-800/40 transition">
                         <td className="py-2 px-3 border border-slate-800 text-center font-mono font-medium text-slate-300">{formatDateDisplay(tx.date)}</td>
                         <td className="py-2 px-3 border border-slate-800 font-medium text-slate-200">{tx.ledger || '—'}</td>
@@ -895,10 +961,14 @@ export default function SpreadsheetTool() {
                   </tbody>
                 </table>
               </div>
-              <div className="p-3 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-                <span>Showing <b>{filteredTransactions.length}</b> of <b>{transactions.length}</b> transactions</span>
-                <span className="italic text-slate-500">Balances computed sequentially from opening balance</span>
-              </div>
+              <TablePagination
+                currentPage={currentPage}
+                totalItems={filteredTransactions.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+                pageSizeOptions={[25, 50, 100, 200]}
+              />
             </div>
           )}
 

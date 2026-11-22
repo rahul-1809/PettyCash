@@ -2,6 +2,9 @@ import io
 import os
 import re
 import datetime
+import zipfile
+import base64
+import html
 from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -828,3 +831,480 @@ def generate_drilldown_excel(project: str, tx_type: str, transactions: List[Dict
     wb.save(output)
     output.seek(0)
     return output
+
+
+# ─── Session ZIP Bundle & Offline Evidence Viewer ────────────────────────────
+
+def _generate_session_evidence_html(
+    session_name: str,
+    opening_balance: float,
+    start_date: str,
+    end_date: str,
+    transactions: List[Dict[str, Any]],
+    summary: Dict[str, Any],
+    tx_supportings_map: Dict[str, List[Dict[str, str]]],
+) -> str:
+    """Generate modern, offline self-contained HTML evidence viewer with live search."""
+    tot_receipts = summary.get("total_receipts", 0.0)
+    tot_payments = summary.get("total_payments", 0.0)
+    closing_balance = summary.get("closing_balance", opening_balance + tot_receipts - tot_payments)
+    
+    op_str = f"₹{opening_balance:,.2f}"
+    rec_str = f"₹{tot_receipts:,.2f}"
+    pay_str = f"₹{tot_payments:,.2f}"
+    cl_str = f"₹{closing_balance:,.2f}"
+    
+    rows_html = []
+    for idx, tx in enumerate(transactions):
+        tx_id = tx.get("id") or f"row_{idx+1}"
+        supp_list = tx_supportings_map.get(tx_id, [])
+        
+        supp_badges = []
+        for s in supp_list:
+            s_name = html.escape(s.get("name", "Document"))
+            s_path = html.escape(s.get("rel_path", "#"))
+            supp_badges.append(
+                f'<a class="doc-badge" href="{s_path}" target="_blank" title="{s_name}">📄 {s_name}</a>'
+            )
+        supp_html = " ".join(supp_badges) if supp_badges else '<span class="muted">—</span>'
+
+        date_val = html.escape(str(tx.get("date") or ""))
+        ledger_val = html.escape(str(tx.get("ledger") or ""))
+        memo_val = html.escape(str(tx.get("memo") or ""))
+        project_val = html.escape(str(tx.get("project") or ""))
+        category_val = html.escape(str(tx.get("category") or ""))
+        status_val = html.escape(str(tx.get("status") or "NA"))
+        
+        r_num = float(tx.get("receipt") or 0.0)
+        p_num = float(tx.get("payment") or 0.0)
+        b_num = float(tx.get("balance") or 0.0)
+        
+        r_disp = f"+₹{r_num:,.2f}" if r_num > 0 else "—"
+        p_disp = f"-₹{p_num:,.2f}" if p_num > 0 else "—"
+        b_disp = f"₹{b_num:,.2f}"
+        b_cls = "neg" if b_num < 0 else "pos"
+        
+        rows_html.append(f"""
+        <tr class="tx-row" data-search="{date_val.lower()} {ledger_val.lower()} {memo_val.lower()} {project_val.lower()} {category_val.lower()}">
+            <td class="mono">{date_val}</td>
+            <td>{ledger_val}</td>
+            <td class="desc"><strong>{memo_val}</strong></td>
+            <td><span class="badge project">{project_val}</span></td>
+            <td><span class="muted">{category_val}</span></td>
+            <td class="mono num rec">{r_disp}</td>
+            <td class="mono num pay">{p_disp}</td>
+            <td class="mono num {b_cls}"><strong>{b_disp}</strong></td>
+            <td><span class="badge status">{status_val}</span></td>
+            <td>{supp_html}</td>
+        </tr>""")
+
+    tbody_content = "\n".join(rows_html) if rows_html else '<tr><td colspan="10" class="empty">No transactions found.</td></tr>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{html.escape(session_name)} - Offline Evidence Viewer</title>
+<style>
+:root {{
+  --bg: #090d16;
+  --surface: #111827;
+  --surface-border: #1f2937;
+  --text: #f3f4f6;
+  --text-muted: #9ca3af;
+  --primary: #10b981;
+  --primary-bg: rgba(16, 185, 129, 0.1);
+  --danger: #f43f5e;
+  --danger-bg: rgba(244, 63, 94, 0.1);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.1);
+  --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  padding: 24px;
+}}
+.container {{
+  max-width: 1400px;
+  margin: 0 auto;
+}}
+header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--surface-border);
+  margin-bottom: 24px;
+}}
+.title-group h1 {{
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}}
+.title-group p {{
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 4px;
+}}
+.header-badge {{
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 4px 10px;
+  border-radius: 9999px;
+}}
+.kpi-grid {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}}
+.kpi-card {{
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 16px;
+}}
+.kpi-label {{
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}}
+.kpi-value {{
+  font-size: 22px;
+  font-weight: 700;
+  font-family: var(--mono-font);
+  margin-top: 6px;
+}}
+.kpi-value.green {{ color: #34d399; }}
+.kpi-value.amber {{ color: #fbbf24; }}
+.kpi-value.rose {{ color: #f87171; }}
+.toolbar {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}}
+.search-box {{
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  width: 100%;
+  max-width: 360px;
+  outline: none;
+}}
+.search-box:focus {{
+  border-color: var(--primary);
+}}
+.table-card {{
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  overflow: hidden;
+}}
+.table-wrap {{
+  overflow-x: auto;
+  max-height: 700px;
+}}
+table {{
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}}
+th {{
+  background: #0d131f;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--surface-border);
+  letter-spacing: 0.05em;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}}
+td {{
+  padding: 10px 14px;
+  border-bottom: 1px solid #1a2234;
+  vertical-align: middle;
+}}
+tr:hover td {{
+  background: rgba(255, 255, 255, 0.02);
+}}
+.mono {{
+  font-family: var(--mono-font);
+}}
+.num {{
+  text-align: right;
+}}
+.rec {{
+  color: #34d399;
+}}
+.pay {{
+  color: #fbbf24;
+}}
+.neg {{
+  color: #f87171;
+}}
+.pos {{
+  color: #f3f4f6;
+}}
+.desc {{
+  max-width: 320px;
+  word-break: break-word;
+}}
+.badge {{
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}}
+.badge.project {{
+  background: #1e293b;
+  color: #cbd5e1;
+}}
+.badge.status {{
+  background: #1e293b;
+  color: #94a3b8;
+}}
+.doc-badge {{
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-decoration: none;
+  margin: 2px 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+.doc-badge:hover {{
+  background: rgba(16, 185, 129, 0.25);
+}}
+.muted {{
+  color: #64748b;
+}}
+.empty {{
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+}}
+footer {{
+  margin-top: 24px;
+  text-align: center;
+  font-size: 11px;
+  color: #64748b;
+}}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="title-group">
+      <h1>📊 {html.escape(session_name)}</h1>
+      <p>Period: <b>{html.escape(start_date or 'N/A')}</b> to <b>{html.escape(end_date or 'N/A')}</b> &bull; Total Entries: <b>{len(transactions)}</b></p>
+    </div>
+    <div class="header-badge">PETTY CASH AUDIT BUNDLE</div>
+  </header>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Opening Balance</div>
+      <div class="kpi-value {'rose' if opening_balance < 0 else ''}">{op_str}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Receipts</div>
+      <div class="kpi-value green">{rec_str}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Payments</div>
+      <div class="kpi-value amber">{pay_str}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Closing Balance</div>
+      <div class="kpi-value {'rose' if closing_balance < 0 else 'green'}">{cl_str}</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="searchInput" class="search-box" placeholder="Filter by date, description, project, ledger..." onkeyup="filterRows()">
+    <span id="matchCount" style="font-size: 12px; color: var(--text-muted);">Showing {len(transactions)} transactions</span>
+  </div>
+
+  <div class="table-card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Ledger</th>
+            <th>Description / Memo</th>
+            <th>Project</th>
+            <th>Category</th>
+            <th style="text-align: right;">Receipt</th>
+            <th style="text-align: right;">Payment</th>
+            <th style="text-align: right;">Balance</th>
+            <th>Status</th>
+            <th>Evidence Files</th>
+          </tr>
+        </thead>
+        <tbody id="txBody">
+          {tbody_content}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    Generated by PettyCash Pro Enterprise System &bull; Offline Audit Evidence Package &bull; All supporting files are hyperlinked relatively within this package.
+  </footer>
+</div>
+
+<script>
+function filterRows() {{
+  const query = document.getElementById('searchInput').value.toLowerCase().trim();
+  const rows = document.querySelectorAll('.tx-row');
+  let matchCount = 0;
+  rows.forEach(row => {{
+    const text = row.getAttribute('data-search') || '';
+    if (!query || text.includes(query)) {{
+      row.style.display = '';
+      matchCount++;
+    }} else {{
+      row.style.display = 'none';
+    }}
+  }});
+  document.getElementById('matchCount').innerText = 'Showing ' + matchCount + ' of ' + rows.length + ' transactions';
+}}
+</script>
+</body>
+</html>"""
+
+
+def generate_session_zip_bundle(
+    opening_balance: float,
+    start_date: str,
+    end_date: str,
+    transactions: List[Dict[str, Any]],
+    session_name: Optional[str] = None,
+    summary: Optional[Dict[str, Any]] = None,
+) -> io.BytesIO:
+    """Generate complete session ZIP package containing the styled Excel workbook,
+    interactive offline HTML evidence viewer, and all attached voucher documents.
+
+    Structure of ZIP:
+    ├── {session_name}.xlsx
+    ├── evidence_viewer.html
+    └── supportings/
+        ├── tx1_bill.pdf
+        └── tx2_receipt.png
+    """
+    if not summary:
+        summary = recalculate_summary(opening_balance, start_date, end_date, transactions)
+
+    zip_buffer = io.BytesIO()
+    display_name = session_name or f"Petty Cash {start_date} to {end_date}"
+    clean_session_name = re.sub(r"[^A-Za-z0-9._-]", "_", display_name).strip("_")
+    if not clean_session_name:
+        clean_session_name = "Petty_Cash_Session"
+
+    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        tx_supportings_map = {}
+        used_filenames = set()
+
+        # 1. Process and bundle supportings
+        for idx, tx in enumerate(transactions):
+            tx_id = tx.get("id") or f"row_{idx+1}"
+            tx_supportings_map[tx_id] = []
+            raw_supportings = tx.get("supportings") or []
+            if isinstance(raw_supportings, dict):
+                raw_supportings = [raw_supportings]
+
+            for s_idx, supp in enumerate(raw_supportings):
+                if not isinstance(supp, dict):
+                    continue
+                orig_name = supp.get("name") or supp.get("original_filename") or f"supporting_{idx+1}_{s_idx+1}.bin"
+                safe_orig = re.sub(r"[^A-Za-z0-9._-]", "_", orig_name)
+                archive_filename = f"supportings/tx{idx+1}_{safe_orig}"
+
+                counter = 1
+                while archive_filename in used_filenames:
+                    archive_filename = f"supportings/tx{idx+1}_{counter}_{safe_orig}"
+                    counter += 1
+                used_filenames.add(archive_filename)
+
+                file_bytes = None
+                raw_data = supp.get("data") or supp.get("file_data")
+                if raw_data:
+                    try:
+                        file_bytes = base64.b64decode(raw_data)
+                    except Exception:
+                        file_bytes = None
+
+                if not file_bytes and supp.get("id"):
+                    try:
+                        from backend import database
+                        with database.get_connection() as conn:
+                            marker = database._placeholder()
+                            f_row = conn.execute(
+                                f"SELECT file_data FROM supporting_files WHERE id={marker}",
+                                (supp["id"],),
+                            ).fetchone()
+                            if f_row and f_row.get("file_data"):
+                                file_bytes = base64.b64decode(f_row["file_data"])
+                    except Exception:
+                        file_bytes = None
+
+                if file_bytes:
+                    archive.writestr(archive_filename, file_bytes)
+                    tx_supportings_map[tx_id].append({
+                        "name": orig_name,
+                        "rel_path": archive_filename,
+                    })
+
+        # 2. Add styled Excel workbook
+        excel_stream = generate_styled_excel(opening_balance, start_date, end_date, transactions)
+        archive.writestr(f"{clean_session_name}.xlsx", excel_stream.getvalue())
+
+        # 3. Add offline Evidence Viewer HTML
+        html_viewer = _generate_session_evidence_html(
+            session_name=display_name,
+            opening_balance=opening_balance,
+            start_date=start_date,
+            end_date=end_date,
+            transactions=transactions,
+            summary=summary,
+            tx_supportings_map=tx_supportings_map,
+        )
+        archive.writestr("evidence_viewer.html", html_viewer.encode("utf-8"))
+
+    zip_buffer.seek(0)
+    return zip_buffer
+
