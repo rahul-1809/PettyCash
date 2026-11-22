@@ -8,6 +8,7 @@ Provides:
   anomalous balance changes, and backup freshness)
 """
 
+import base64
 import datetime
 import hashlib
 import json
@@ -216,6 +217,7 @@ def _export_postgres_to_sqlite(target_file: Path) -> None:
             """)
             raw_tables = cur.fetchall()
             tables = [r[0] if isinstance(r, (list, tuple)) else r["table_name"] for r in raw_tables]
+            tables = [t for t in tables if t != "database_backups"]
             for t in tables:
                 cur.execute("""
                     SELECT column_name FROM information_schema.columns 
@@ -278,6 +280,7 @@ def create_database_backup(destination_dir: Optional[str] = None) -> Dict[str, A
     file_bytes = target_file.read_bytes()
     checksum = hashlib.sha256(file_bytes).hexdigest()
     size_bytes = len(file_bytes)
+    created_at_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     backup_info = {
         "backup_id": backup_filename,
@@ -285,9 +288,31 @@ def create_database_backup(destination_dir: Optional[str] = None) -> Dict[str, A
         "path": str(target_file),
         "size_bytes": size_bytes,
         "checksum_sha256": checksum,
-        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "created_at": created_at_iso,
         "status": "COMPLETED",
+        "storage_location": "Supabase PostgreSQL Database",
     }
+
+    # Persist backup snapshot directly into Supabase database_backups table
+    b64_data = base64.b64encode(file_bytes).decode("ascii")
+    try:
+        with database.get_connection() as conn:
+            marker = database._placeholder()
+            conn.execute(
+                f"""
+                INSERT INTO database_backups
+                    (id, filename, size_bytes, checksum_sha256, file_data, created_at, status)
+                VALUES ({marker}, {marker}, {marker}, {marker}, {marker}, {marker}, {marker})
+                ON CONFLICT (id) DO UPDATE SET
+                    file_data = EXCLUDED.file_data,
+                    size_bytes = EXCLUDED.size_bytes,
+                    checksum_sha256 = EXCLUDED.checksum_sha256
+                """,
+                (backup_filename, backup_filename, size_bytes, checksum, b64_data, created_at_iso, "COMPLETED"),
+            )
+            conn.commit()
+    except Exception as exc:
+        logger.warning(f"Failed to persist backup snapshot into database_backups table: {exc}")
 
     # Update manifest
     manifest_file = dest_path / "backups_manifest.json"
@@ -304,19 +329,52 @@ def create_database_backup(destination_dir: Optional[str] = None) -> Dict[str, A
 
 
 def list_backups() -> List[Dict[str, Any]]:
-    """List all available database backups, newest first."""
+    """List all available database backups, newest first, reading primarily from Supabase storage."""
     dest_path = get_backup_dir()
+    backups: List[Dict[str, Any]] = []
+    known_ids = set()
+
+    # 1. Primary: Persistent Supabase database_backups table
+    try:
+        with database.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, filename, size_bytes, checksum_sha256, created_at, status
+                FROM database_backups
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+            for r in rows:
+                bid = r["id"] if isinstance(r, dict) else r[0]
+                if bid not in known_ids:
+                    known_ids.add(bid)
+                    backups.append({
+                        "backup_id": bid,
+                        "filename": r["filename"] if isinstance(r, dict) else r[1],
+                        "path": str(dest_path / bid),
+                        "size_bytes": r["size_bytes"] if isinstance(r, dict) else r[2],
+                        "checksum_sha256": r["checksum_sha256"] if isinstance(r, dict) else r[3],
+                        "created_at": r["created_at"] if isinstance(r, dict) else r[4],
+                        "status": r["status"] if isinstance(r, dict) else r[5],
+                        "storage_location": "Supabase PostgreSQL Database",
+                    })
+    except Exception:
+        pass
+
+    # 2. Secondary: Manifest file
     manifest_file = dest_path / "backups_manifest.json"
-    manifest: List[Dict[str, Any]] = []
     if manifest_file.exists():
         try:
             manifest = json.loads(manifest_file.read_text())
+            for item in manifest:
+                bid = item.get("backup_id")
+                if bid and bid not in known_ids:
+                    known_ids.add(bid)
+                    backups.append(item)
         except Exception:
-            manifest = []
+            pass
 
-    # Directory scan
-    backups = list(manifest)
-    known_ids = {b.get("backup_id") for b in backups}
+    # 3. Directory scan
     for file in sorted(dest_path.glob("*.db"), key=os.path.getmtime, reverse=True):
         if file.name not in known_ids:
             try:
@@ -330,13 +388,14 @@ def list_backups() -> List[Dict[str, Any]]:
                     "checksum_sha256": hashlib.sha256(file.read_bytes()).hexdigest(),
                     "created_at": mtime,
                     "status": "COMPLETED",
+                    "storage_location": "Local Disk",
                 }
                 backups.append(item)
                 known_ids.add(file.name)
             except Exception:
                 pass
 
-    # Audit events persistent fallback (preserves backup records even across ephemeral container restarts)
+    # 4. Audit events persistent fallback
     try:
         with database.get_connection() as conn:
             rows = conn.execute(
@@ -364,15 +423,33 @@ def list_backups() -> List[Dict[str, Any]]:
     return backups
 
 
-def verify_database_backup(backup_id_or_path: str) -> Dict[str, Any]:
-    """Verify integrity of a SQLite database backup file."""
+def get_backup_file(backup_id: str) -> tuple[Dict[str, Any], Path]:
+    """Retrieve verified backup file from Supabase or local storage, restoring to disk if needed."""
     dest_path = get_backup_dir()
-    target_path = Path(backup_id_or_path)
+    target_path = dest_path / backup_id
     if not target_path.is_file():
-        target_path = dest_path / backup_id_or_path
+        target_path = Path(backup_id)
 
+    # If missing from local disk, restore directly from Supabase database_backups table
+    if not target_path.is_file():
+        try:
+            with database.get_connection() as conn:
+                marker = database._placeholder()
+                row = conn.execute(
+                    f"SELECT id, filename, size_bytes, checksum_sha256, file_data, created_at FROM database_backups WHERE id={marker} OR filename={marker}",
+                    (backup_id, backup_id),
+                ).fetchone()
+                if row and row.get("file_data"):
+                    b_bytes = base64.b64decode(row["file_data"])
+                    dest_file = dest_path / (row.get("filename") or backup_id)
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    dest_file.write_bytes(b_bytes)
+                    target_path = dest_file
+        except Exception as exc:
+            logger.warning(f"Could not restore backup from database_backups table: {exc}")
+
+    # Fallback to dynamic export if using PostgreSQL
     if not target_path.is_file() and getattr(database, "DATABASE_URL", None):
-        # Auto-restore snapshot on demand if container restarted
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             _export_postgres_to_sqlite(target_path)
@@ -380,9 +457,26 @@ def verify_database_backup(backup_id_or_path: str) -> Dict[str, Any]:
             pass
 
     if not target_path.is_file():
+        raise FileNotFoundError(f"Backup snapshot '{backup_id}' could not be located in Supabase or local storage.")
+
+    checksum = hashlib.sha256(target_path.read_bytes()).hexdigest()
+    metadata = {
+        "backup_id": target_path.name,
+        "filename": target_path.name,
+        "size_bytes": target_path.stat().st_size,
+        "checksum_sha256": checksum,
+    }
+    return metadata, target_path
+
+
+def verify_database_backup(backup_id_or_path: str) -> Dict[str, Any]:
+    """Verify integrity of a SQLite database backup file."""
+    try:
+        metadata, target_path = get_backup_file(backup_id_or_path)
+    except FileNotFoundError as exc:
         return {
             "valid": False,
-            "error": f"Backup file not found: {backup_id_or_path}",
+            "error": str(exc),
         }
 
     try:
@@ -426,12 +520,7 @@ def verify_database_backup(backup_id_or_path: str) -> Dict[str, Any]:
 
 def restore_database_backup(backup_id_or_path: str, target_db_path: Optional[str] = None) -> Dict[str, Any]:
     """Restore a database from a verified online backup using SQLite's transactional backup API."""
-    dest_path = get_backup_dir()
-    target_backup = Path(backup_id_or_path)
-    if not target_backup.is_file():
-        target_backup = dest_path / backup_id_or_path
-    if not target_backup.is_file():
-        raise FileNotFoundError(f"Backup file not found: {backup_id_or_path}")
+    metadata, target_backup = get_backup_file(backup_id_or_path)
 
     # 1. Verify backup integrity before restoring
     verification = verify_database_backup(str(target_backup))

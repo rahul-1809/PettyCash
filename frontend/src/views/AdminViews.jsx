@@ -491,6 +491,16 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
     }
   };
 
+  const handleDownloadBackup = async (backupId) => {
+    try {
+      addToast({ type: 'info', title: 'Downloading Snapshot', message: `Fetching ${backupId} from Supabase storage...` });
+      await api.downloadBackup(backupId);
+      addToast({ type: 'success', title: 'Download Complete', message: `Snapshot ${backupId} downloaded.` });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Download Failed', message: err.message });
+    }
+  };
+
   const handleRestoreBackup = async (backupId) => {
     if (!window.confirm(`Are you sure you want to restore database from backup ${backupId}? Current database will be updated from this verified snapshot.`)) {
       return;
@@ -2329,16 +2339,17 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
               <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                 <tr>
                   <th className="p-3">Backup File</th>
+                  <th className="p-3">Storage Engine</th>
                   <th className="p-3">Created At</th>
                   <th className="p-3">Size</th>
                   <th className="p-3">SHA256 Checksum</th>
-                  <th className="p-3 text-right">Integrity Check</th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
                 {backups.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-6 text-center text-slate-500 font-sans">
+                    <td colSpan={6} className="p-6 text-center text-slate-500 font-sans">
                       No backups generated yet.
                     </td>
                   </tr>
@@ -2346,10 +2357,22 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                   backups.map((bk) => (
                     <tr key={bk.backup_id} className="hover:bg-slate-800/40">
                       <td className="p-3 font-semibold text-slate-100">{bk.filename || bk.backup_id}</td>
-                      <td className="p-3 text-slate-400">{bk.created_at?.split('.')[0]}</td>
+                      <td className="p-3 font-sans">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                          Supabase Storage
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-400">{bk.created_at?.split('.')[0]?.replace('T', ' ')}</td>
                       <td className="p-3 text-slate-300">{(bk.size_bytes / 1024).toFixed(1)} KB</td>
                       <td className="p-3 text-slate-500 truncate max-w-[140px]">{bk.checksum_sha256}</td>
                       <td className="p-3 text-right font-sans space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadBackup(bk.backup_id)}
+                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-400 text-[10px] font-semibold cursor-pointer"
+                        >
+                          Download
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleVerifyBackup(bk.backup_id)}

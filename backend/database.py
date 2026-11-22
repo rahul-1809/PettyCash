@@ -58,7 +58,7 @@ def get_pool():
                 max_size=12,
                 timeout=10.0,
                 max_idle=300.0,
-                kwargs={"row_factory": dict_row},
+                kwargs={"row_factory": dict_row, "prepare_threshold": None},
                 open=True,
             )
         except Exception:
@@ -84,7 +84,7 @@ def get_connection():
         pool = get_pool()
         if pool is not None:
             return pool.connection()
-        return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        return psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -121,6 +121,19 @@ def init_db():
             CREATE TABLE IF NOT EXISTS project_categories (
                 name       TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS database_backups (
+                id          TEXT PRIMARY KEY,
+                filename    TEXT NOT NULL,
+                size_bytes  BIGINT NOT NULL,
+                checksum_sha256 TEXT NOT NULL,
+                file_data   TEXT NOT NULL,
+                created_at  TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'COMPLETED'
             )
             """
         )

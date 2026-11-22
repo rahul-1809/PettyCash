@@ -269,6 +269,8 @@ export const api = {
   getErrors: (limit = 50) => request(`/operations/errors?limit=${limit}`),
   createBackup: () => request('/operations/backups/create', { method: 'POST' }),
   listBackups: () => request('/operations/backups'),
+  downloadBackup: (backupId) =>
+    api.downloadFile(`${API_BASE}/operations/backups/${backupId}/download`, backupId),
   verifyBackup: (backup_id) =>
     request('/operations/backups/verify', { method: 'POST', body: { backup_id } }),
   restoreBackup: (backup_id, target_db_path = null) =>

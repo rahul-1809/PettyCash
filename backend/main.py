@@ -114,6 +114,7 @@ try:
         get_business_metrics,
         create_database_backup,
         list_backups,
+        get_backup_file,
         verify_database_backup,
         restore_database_backup,
         execute_deployment_rollback,
@@ -216,6 +217,7 @@ except ImportError:
         get_business_metrics,
         create_database_backup,
         list_backups,
+        get_backup_file,
         verify_database_backup,
         restore_database_backup,
         execute_deployment_rollback,
@@ -1635,6 +1637,25 @@ def trigger_backup(admin: dict = Depends(require_roles("Admin"))):
 )
 def get_backups(admin: dict = Depends(require_roles("Admin"))):
     return list_backups()
+
+
+@app.get(
+    "/api/operations/backups/{backup_id}/download",
+    tags=["Operations & Observability"],
+    summary="Download database backup (Admin)",
+    description="Downloads the verified SQLite database snapshot file directly from persistent storage.",
+)
+def download_backup_file(backup_id: str, admin: dict = Depends(require_roles("Admin"))):
+    try:
+        metadata, path = get_backup_file(backup_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(
+        path,
+        media_type="application/x-sqlite3",
+        filename=metadata.get("filename") or backup_id,
+        content_disposition_type="attachment",
+    )
 
 
 @app.post(
