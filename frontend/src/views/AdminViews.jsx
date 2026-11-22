@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import Modal from '../components/Modal';
+import TablePagination from '../components/TablePagination';
 
 export default function AdminViews({ currentView, onNavigate, addToast, user }) {
   const [loading, setLoading] = useState(false);
@@ -63,6 +64,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
   const [alerts, setAlerts] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [backups, setBackups] = useState([]);
+  const [recentErrors, setRecentErrors] = useState([]);
   const [monthlyReport, setMonthlyReport] = useState(null);
   const [reportMonth, setReportMonth] = useState(new Date().toISOString().substring(0, 7));
   const [reportActiveTab, setReportActiveTab] = useState('summary'); // 'summary' | 'sheet' | 'analytics'
@@ -70,6 +72,22 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
   const [reportSelectedProject, setReportSelectedProject] = useState('ALL');
   const [reportSelectedLedger, setReportSelectedLedger] = useState('ALL');
   const [reportDrilldownData, setReportDrilldownData] = useState(null);
+
+  // Pagination states
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(25);
+
+  const [reportSheetPage, setReportSheetPage] = useState(1);
+  const [reportSheetPageSize, setReportSheetPageSize] = useState(25);
+
+  const [drilldownPage, setDrilldownPage] = useState(1);
+  const [drilldownPageSize, setDrilldownPageSize] = useState(10);
+
+  const [backupsPage, setBackupsPage] = useState(1);
+  const [backupsPageSize, setBackupsPageSize] = useState(5);
+
+  const [errorsPage, setErrorsPage] = useState(1);
+  const [errorsPageSize, setErrorsPageSize] = useState(10);
 
   // Modals state
   const [provisionModalOpen, setProvisionModalOpen] = useState(false);
@@ -184,8 +202,11 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
         const rep = await api.getMonthlyReport(reportMonth).catch(() => null);
         setMonthlyReport(rep);
       } else if (currentView === 'admin_audit') {
-        const audit = await api.listAuditEvents({ limit: 500 }).catch(() => []);
+        const audit = await api.listAuditEvents({ limit: 1000 }).catch(() => []);
         setAuditEvents(audit || []);
+      } else if (currentView === 'admin_operations') {
+        const errs = await api.getErrors(100).catch(() => ({ errors: [] }));
+        setRecentErrors(errs?.errors || []);
       }
     } catch (e) {
       console.error(e);
@@ -198,6 +219,15 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
   useEffect(() => {
     loadData();
   }, [currentView, reportMonth]);
+
+  // Reset pagination on filter adjustments
+  useEffect(() => {
+    setReportSheetPage(1);
+  }, [reportMonth, reportSearchTerm, reportSelectedProject, reportSelectedLedger]);
+
+  useEffect(() => {
+    setAuditPage(1);
+  }, [auditFilter, auditSearch]);
 
   // Handlers
   const handleProvisionUser = async (e) => {
@@ -772,6 +802,52 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       (tx.date || '').includes(term);
     return matchesProj && matchesLedger && matchesSearch;
   });
+
+  const paginatedReportEntries = filteredReportEntries.slice(
+    (reportSheetPage - 1) * reportSheetPageSize,
+    reportSheetPage * reportSheetPageSize
+  );
+
+  const filteredAuditEvents = auditEvents.filter((evt) => {
+    if (auditFilter !== 'ALL') {
+      if (auditFilter === 'REQUESTS' && !evt.action.includes('REQUEST')) return false;
+      if (auditFilter === 'CATALOG' && !evt.action.includes('PROJECT') && !evt.action.includes('LEDGER')) return false;
+      if (auditFilter === 'USERS' && !evt.action.includes('USER') && !evt.action.includes('ASSIGNMENT') && !evt.action.includes('AUTH')) return false;
+      if (auditFilter === 'FINANCE' && !evt.action.includes('PERIOD') && !evt.action.includes('BALANCE') && !evt.action.includes('RECEIPT')) return false;
+      if (auditFilter === 'EXPORTS' && !evt.action.includes('EXPORT')) return false;
+    }
+    if (auditSearch.trim()) {
+      const q = auditSearch.toLowerCase();
+      const matchAction = evt.action?.toLowerCase().includes(q);
+      const matchActor = (evt.actor_username || evt.actor_user_id || '').toLowerCase().includes(q);
+      const matchEntity = (evt.entity_type || '').toLowerCase().includes(q);
+      const matchCorr = (evt.correlation_id || '').toLowerCase().includes(q);
+      const matchBefore = (evt.before_json || '').toLowerCase().includes(q);
+      const matchAfter = (evt.after_json || '').toLowerCase().includes(q);
+      return matchAction || matchActor || matchEntity || matchCorr || matchBefore || matchAfter;
+    }
+    return true;
+  });
+
+  const paginatedAuditEvents = filteredAuditEvents.slice(
+    (auditPage - 1) * auditPageSize,
+    auditPage * auditPageSize
+  );
+
+  const paginatedBackups = backups.slice(
+    (backupsPage - 1) * backupsPageSize,
+    backupsPage * backupsPageSize
+  );
+
+  const paginatedErrors = recentErrors.slice(
+    (errorsPage - 1) * errorsPageSize,
+    errorsPage * errorsPageSize
+  );
+
+  const paginatedDrilldownRows = (reportDrilldownData?.rows || []).slice(
+    (drilldownPage - 1) * drilldownPageSize,
+    drilldownPage * drilldownPageSize
+  );
 
   // ── Render Admin Views
   return (
@@ -1910,7 +1986,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                         </td>
                       </tr>
                     ) : (
-                      filteredReportEntries.map((tx, idx) => (
+                      paginatedReportEntries.map((tx, idx) => (
                         <tr key={tx.id || idx} className="hover:bg-slate-800/40 transition">
                           <td className="py-2 px-3 border border-slate-800 whitespace-nowrap">{tx.date}</td>
                           <td className="py-2 px-3 border border-slate-800 font-medium text-slate-200">{tx.ledger || '—'}</td>
@@ -1961,12 +2037,14 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                   </tbody>
                 </table>
               </div>
-              <div className="p-3 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-                <span>
-                  Showing <b>{filteredReportEntries.length}</b> of <b>{monthlyReport?.posted_entries?.length || 0}</b> transactions
-                </span>
-                <span className="italic text-slate-500">Balances computed sequentially from opening balance</span>
-              </div>
+              <TablePagination
+                currentPage={reportSheetPage}
+                totalItems={filteredReportEntries.length}
+                pageSize={reportSheetPageSize}
+                onPageChange={setReportSheetPage}
+                onPageSizeChange={setReportSheetPageSize}
+                pageSizeOptions={[10, 25, 50, 100]}
+              />
             </div>
           )}
 
@@ -2172,7 +2250,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
-                      {reportDrilldownData.rows.map((tx, idx) => (
+                      {paginatedDrilldownRows.map((tx, idx) => (
                         <tr key={tx.id || idx} className="hover:bg-slate-800/40 transition">
                           <td className="py-2 px-3 border border-slate-800 whitespace-nowrap">{tx.date}</td>
                           <td className="py-2 px-3 border border-slate-800 font-medium text-slate-200">{tx.ledger || '—'}</td>
@@ -2239,6 +2317,14 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                       </tr>
                     </tfoot>
                   </table>
+                  <TablePagination
+                    currentPage={drilldownPage}
+                    totalItems={(reportDrilldownData.rows || []).length}
+                    pageSize={drilldownPageSize}
+                    onPageChange={setDrilldownPage}
+                    onPageSizeChange={setDrilldownPageSize}
+                    pageSizeOptions={[5, 10, 20]}
+                  />
                 </div>
                 <div className="px-6 py-3 border-t border-slate-800 bg-slate-950 flex items-center justify-end">
                   <button
@@ -2354,7 +2440,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                     </td>
                   </tr>
                 ) : (
-                  backups.map((bk) => (
+                  paginatedBackups.map((bk) => (
                     <tr key={bk.backup_id} className="hover:bg-slate-800/40">
                       <td className="p-3 font-semibold text-slate-100">{bk.filename || bk.backup_id}</td>
                       <td className="p-3 font-sans">
@@ -2394,6 +2480,76 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 )}
               </tbody>
             </table>
+            <TablePagination
+              currentPage={backupsPage}
+              totalItems={backups.length}
+              pageSize={backupsPageSize}
+              onPageChange={setBackupsPage}
+              onPageSizeChange={setBackupsPageSize}
+              pageSizeOptions={[5, 10, 20]}
+            />
+          </div>
+
+          {/* Diagnostic Error Logs Table */}
+          <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-200">
+                  Recent Production Errors & Diagnostics ({recentErrors.length})
+                </span>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Real-time telemetry capturing failed requests, unhandled exceptions, and API status codes.
+                </p>
+              </div>
+            </div>
+            <table className="w-full text-left text-xs text-slate-200">
+              <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                <tr>
+                  <th className="p-3">Timestamp</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Method & Path</th>
+                  <th className="p-3">Error Type</th>
+                  <th className="p-3">Message</th>
+                  <th className="p-3 text-right">Correlation ID</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                {recentErrors.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-6 text-center text-slate-500 font-sans">
+                      No production errors recorded. All systems healthy.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedErrors.map((err, idx) => (
+                    <tr key={idx} className="hover:bg-slate-800/40">
+                      <td className="p-3 text-slate-400 whitespace-nowrap">{err.timestamp?.split('.')[0]?.replace('T', ' ')}</td>
+                      <td className="p-3 font-sans">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          err.status_code >= 500
+                            ? 'bg-rose-950 text-rose-300 border-rose-800'
+                            : 'bg-amber-950 text-amber-300 border-amber-800'
+                        }`}>
+                          HTTP {err.status_code}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-200 font-semibold">{err.method} {err.path}</td>
+                      <td className="p-3 text-rose-400 font-semibold">{err.error_type}</td>
+                      <td className="p-3 text-slate-300 font-sans max-w-xs truncate" title={err.message}>{err.message}</td>
+                      <td className="p-3 text-right text-slate-500 text-[10px]">{err.correlation_id || '—'}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            <TablePagination
+              currentPage={errorsPage}
+              totalItems={recentErrors.length}
+              pageSize={errorsPageSize}
+              onPageChange={setErrorsPage}
+              onPageSizeChange={setErrorsPageSize}
+              pageSizeOptions={[5, 10, 25]}
+            />
           </div>
         </div>
       )}
@@ -2462,28 +2618,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
           <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
             <div className="px-4 py-2.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
               <span>
-                Displaying <strong>{
-                  auditEvents.filter((evt) => {
-                    if (auditFilter !== 'ALL') {
-                      if (auditFilter === 'REQUESTS' && !evt.action.includes('REQUEST')) return false;
-                      if (auditFilter === 'CATALOG' && !evt.action.includes('PROJECT') && !evt.action.includes('LEDGER')) return false;
-                      if (auditFilter === 'USERS' && !evt.action.includes('USER') && !evt.action.includes('ASSIGNMENT') && !evt.action.includes('AUTH')) return false;
-                      if (auditFilter === 'FINANCE' && !evt.action.includes('PERIOD') && !evt.action.includes('BALANCE') && !evt.action.includes('RECEIPT')) return false;
-                      if (auditFilter === 'EXPORTS' && !evt.action.includes('EXPORT')) return false;
-                    }
-                    if (auditSearch.trim()) {
-                      const q = auditSearch.toLowerCase();
-                      const matchAction = evt.action?.toLowerCase().includes(q);
-                      const matchActor = (evt.actor_username || evt.actor_user_id || '').toLowerCase().includes(q);
-                      const matchEntity = (evt.entity_type || '').toLowerCase().includes(q);
-                      const matchCorr = (evt.correlation_id || '').toLowerCase().includes(q);
-                      const matchBefore = (evt.before_json || '').toLowerCase().includes(q);
-                      const matchAfter = (evt.after_json || '').toLowerCase().includes(q);
-                      return matchAction || matchActor || matchEntity || matchCorr || matchBefore || matchAfter;
-                    }
-                    return true;
-                  }).length
-                }</strong> of {auditEvents.length} recorded audit events
+                Displaying <strong>{filteredAuditEvents.length}</strong> of {auditEvents.length} recorded audit events
               </span>
             </div>
 
@@ -2499,99 +2634,86 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {auditEvents.length === 0 ? (
+                {filteredAuditEvents.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="p-6 text-center text-slate-500">
-                      No audit events recorded.
+                      No audit events match the selected criteria.
                     </td>
                   </tr>
                 ) : (
-                  auditEvents
-                    .filter((evt) => {
-                      if (auditFilter !== 'ALL') {
-                        if (auditFilter === 'REQUESTS' && !evt.action.includes('REQUEST')) return false;
-                        if (auditFilter === 'CATALOG' && !evt.action.includes('PROJECT') && !evt.action.includes('LEDGER')) return false;
-                        if (auditFilter === 'USERS' && !evt.action.includes('USER') && !evt.action.includes('ASSIGNMENT') && !evt.action.includes('AUTH')) return false;
-                        if (auditFilter === 'FINANCE' && !evt.action.includes('PERIOD') && !evt.action.includes('BALANCE') && !evt.action.includes('RECEIPT')) return false;
-                        if (auditFilter === 'EXPORTS' && !evt.action.includes('EXPORT')) return false;
-                      }
-                      if (auditSearch.trim()) {
-                        const q = auditSearch.toLowerCase();
-                        const matchAction = evt.action?.toLowerCase().includes(q);
-                        const matchActor = (evt.actor_username || evt.actor_user_id || '').toLowerCase().includes(q);
-                        const matchEntity = (evt.entity_type || '').toLowerCase().includes(q);
-                        const matchCorr = (evt.correlation_id || '').toLowerCase().includes(q);
-                        const matchBefore = (evt.before_json || '').toLowerCase().includes(q);
-                        const matchAfter = (evt.after_json || '').toLowerCase().includes(q);
-                        return matchAction || matchActor || matchEntity || matchCorr || matchBefore || matchAfter;
-                      }
-                      return true;
-                    })
-                    .map((evt) => {
-                      const isErrorOrReject = evt.action.includes('REJECT') || evt.action.includes('FAIL');
-                      const isSuccess = evt.action.includes('APPROV') || evt.action.includes('POST') || evt.action.includes('SUCCESS');
-                      const isCreateOrAdd = evt.action.includes('CREATE') || evt.action.includes('PROVISION');
-                      const isReversalOrChange = evt.action.includes('REVERS') || evt.action.includes('CHANGE');
+                  paginatedAuditEvents.map((evt) => {
+                    const isErrorOrReject = evt.action.includes('REJECT') || evt.action.includes('FAIL');
+                    const isSuccess = evt.action.includes('APPROV') || evt.action.includes('POST') || evt.action.includes('SUCCESS');
+                    const isCreateOrAdd = evt.action.includes('CREATE') || evt.action.includes('PROVISION');
+                    const isReversalOrChange = evt.action.includes('REVERS') || evt.action.includes('CHANGE');
 
-                      return (
-                        <tr key={evt.id} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                            {evt.created_at?.split('.')[0]?.replace('T', ' ')}
-                          </td>
-                          <td className="p-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                                isErrorOrReject
-                                  ? 'bg-rose-950 text-rose-300 border-rose-800'
-                                  : isSuccess
-                                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
-                                  : isReversalOrChange
-                                  ? 'bg-amber-950 text-amber-300 border-amber-800'
-                                  : isCreateOrAdd
-                                  ? 'bg-cyan-950 text-cyan-300 border-cyan-800'
-                                  : 'bg-slate-800 text-slate-300 border-slate-700'
-                              }`}
-                            >
-                              {evt.action.replace(/_/g, ' ')}
-                            </span>
-                          </td>
-                          <td className="p-3 text-slate-200">
-                            <div className="font-semibold text-xs">
-                              {evt.actor_username || 'System'}
+                    return (
+                      <tr key={evt.id} className="hover:bg-slate-800/40">
+                        <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                          {evt.created_at?.split('.')[0]?.replace('T', ' ')}
+                        </td>
+                        <td className="p-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              isErrorOrReject
+                                ? 'bg-rose-950 text-rose-300 border-rose-800'
+                                : isSuccess
+                                ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                                : isReversalOrChange
+                                ? 'bg-amber-950 text-amber-300 border-amber-800'
+                                : isCreateOrAdd
+                                ? 'bg-cyan-950 text-cyan-300 border-cyan-800'
+                                : 'bg-slate-800 text-slate-300 border-slate-700'
+                            }`}
+                          >
+                            {evt.action.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-200">
+                          <div className="font-semibold text-xs">
+                            {evt.actor_username || 'System'}
+                          </div>
+                          {evt.actor_user_id && (
+                            <div className="text-[10px] font-mono text-slate-500">
+                              {evt.actor_user_id}
                             </div>
-                            {evt.actor_user_id && (
-                              <div className="text-[10px] font-mono text-slate-500">
-                                {evt.actor_user_id}
-                              </div>
-                            )}
-                          </td>
-                          <td className="p-3 text-slate-400 font-mono text-[11px]">
-                            {evt.entity_type}
-                          </td>
-                          <td className="p-3 font-mono text-[11px] text-slate-400">
-                            <span className="text-slate-500 truncate max-w-[180px] block" title={evt.correlation_id}>
-                              {evt.correlation_id || evt.entity_id || '—'}
-                            </span>
-                          </td>
-                          <td className="p-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDetailItem(evt);
-                                setDetailModalOpen(true);
-                              }}
-                              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-medium border border-slate-700 cursor-pointer inline-flex items-center gap-1"
-                              title="Inspect before/after state"
-                            >
-                              <Eye className="w-3.5 h-3.5" /> View Diff
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
+                          )}
+                        </td>
+                        <td className="p-3 text-slate-400 font-mono text-[11px]">
+                          {evt.entity_type}
+                        </td>
+                        <td className="p-3 font-mono text-[11px] text-slate-400">
+                          <span className="text-slate-500 truncate max-w-[180px] block" title={evt.correlation_id}>
+                            {evt.correlation_id || evt.entity_id || '—'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDetailItem(evt);
+                              setDetailModalOpen(true);
+                            }}
+                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-medium border border-slate-700 cursor-pointer inline-flex items-center gap-1"
+                            title="Inspect before/after state"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> View Diff
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
+            <TablePagination
+              currentPage={auditPage}
+              totalItems={filteredAuditEvents.length}
+              pageSize={auditPageSize}
+              onPageChange={setAuditPage}
+              onPageSizeChange={setAuditPageSize}
+              pageSizeOptions={[15, 25, 50, 100]}
+            />
           </div>
         </div>
       )}
