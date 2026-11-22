@@ -205,7 +205,7 @@ export default function NotificationsView({ user, addToast, onNavigate, onNotifi
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-800/80 pb-2">
+      <div className="flex items-center gap-2 border-b border-slate-800/80 pb-2 overflow-x-auto">
         <button
           type="button"
           onClick={() => setFilter('all')}

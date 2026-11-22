@@ -135,7 +135,7 @@ export default function ProfileView({ user, addToast }) {
           <div className="py-8 text-center text-xs text-slate-500">Loading delivery channels...</div>
         ) : (
           <div className="space-y-4 pt-2">
-            <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800">
+            <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800 gap-4">
               <div>
                 <div className="text-sm font-medium text-slate-200">In-App Notifications</div>
                 <div className="text-xs text-slate-400">
@@ -160,7 +160,7 @@ export default function ProfileView({ user, addToast }) {
               </button>
             </div>
 
-            <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800">
+            <div className="flex items-center justify-between p-3.5 bg-slate-950 rounded-md border border-slate-800 gap-4">
               <div>
                 <div className="text-sm font-medium text-slate-200">Email Notifications</div>
                 <div className="text-xs text-slate-400">

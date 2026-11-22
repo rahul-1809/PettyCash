@@ -427,7 +427,8 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
-                <table className="w-full text-left text-xs text-slate-200">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-200">
                   <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                     <tr>
                       <th className="p-3">Employee</th>
@@ -477,6 +478,7 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
                     )}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           )}
@@ -535,50 +537,52 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
-            <table className="w-full text-left text-xs text-slate-200">
-              <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
-                <tr>
-                  <th className="p-3">Date</th>
-                  <th className="p-3">Requester</th>
-                  <th className="p-3">Purpose</th>
-                  <th className="p-3">Amount</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3">Reason / Feedback</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {decisionHistory.length === 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
+                <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-slate-500">
-                      No decision history recorded yet.
-                    </td>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Requester</th>
+                    <th className="p-3">Purpose</th>
+                    <th className="p-3">Amount</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3">Reason / Feedback</th>
                   </tr>
-                ) : (
-                  decisionHistory.map((h) => (
-                    <tr key={h.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-3 font-mono">{h.request_date}</td>
-                      <td className="p-3 text-slate-300 font-medium">{h.requester_username || h.requester_id}</td>
-                      <td className="p-3 text-slate-100">{h.purpose}</td>
-                      <td className="p-3 font-bold text-slate-100">₹{parseFloat(h.amount).toFixed(2)}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                          h.status === 'APPROVED' || h.status === 'POSTED'
-                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                            : h.status === 'REJECTED'
-                            ? 'bg-rose-950 text-rose-300 border border-rose-800'
-                            : 'bg-amber-950 text-amber-300 border border-amber-800'
-                        }`}>
-                          {h.status}
-                        </span>
-                      </td>
-                      <td className="p-3 text-slate-400 italic">
-                        {h.decision_reason || '—'}
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {decisionHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-slate-500">
+                        No decision history recorded yet.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    decisionHistory.map((h) => (
+                      <tr key={h.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3 font-mono">{h.request_date}</td>
+                        <td className="p-3 text-slate-300 font-medium">{h.requester_username || h.requester_id}</td>
+                        <td className="p-3 text-slate-100">{h.purpose}</td>
+                        <td className="p-3 font-bold text-slate-100">₹{parseFloat(h.amount).toFixed(2)}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            h.status === 'APPROVED' || h.status === 'POSTED'
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                              : h.status === 'REJECTED'
+                              ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                              : 'bg-amber-950 text-amber-300 border border-amber-800'
+                          }`}>
+                            {h.status}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-400 italic">
+                          {h.decision_reason || '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

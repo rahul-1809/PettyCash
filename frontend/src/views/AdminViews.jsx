@@ -992,14 +992,14 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       {/* ── View: Users & Access */}
       {currentView === 'admin_users' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-3">
             <div>
               <h1 className="text-lg font-bold text-slate-100">Users & Access Management</h1>
               <p className="text-xs text-slate-400 mt-0.5">
                 Provision role accounts (Admin, Manager, Employee) and configure review assignments.
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setAssignmentModalOpen(true)}
@@ -1025,7 +1025,8 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 text-xs font-semibold text-slate-300">
               Active Organization Users
             </div>
-            <table className="w-full text-left text-xs text-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
               <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                 <tr>
                   <th className="p-3">Username</th>
@@ -1107,6 +1108,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 )}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* Assignments Table */}
@@ -1114,48 +1116,50 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 text-xs font-semibold text-slate-300">
               Manager-to-Employee Review Hierarchy
             </div>
-            <table className="w-full text-left text-xs text-slate-200">
-              <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
-                <tr>
-                  <th className="p-3">Manager</th>
-                  <th className="p-3">Assigned Employee</th>
-                  <th className="p-3">Assigned Date</th>
-                  <th className="p-3">Approval Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {assignments.length === 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
+                <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                   <tr>
-                    <td colSpan={4} className="p-6 text-center text-slate-500">
-                      No assignments configured.
-                    </td>
+                    <th className="p-3">Manager</th>
+                    <th className="p-3">Assigned Employee</th>
+                    <th className="p-3">Assigned Date</th>
+                    <th className="p-3">Approval Status</th>
                   </tr>
-                ) : (
-                  assignments.map((a) => (
-                    <tr key={a.id} className="hover:bg-slate-800/40">
-                      <td className="p-3 font-medium text-purple-300">
-                        {a.manager_username || a.manager_email || a.manager_id}
-                      </td>
-                      <td className="p-3 font-medium text-emerald-300">
-                        {a.employee_username || a.employee_email || a.employee_id}
-                      </td>
-                      <td className="p-3 text-slate-400">{a.assigned_at?.split('T')[0] || a.created_at?.split('T')[0] || '—'}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          a.status === 'APPROVED'
-                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                            : a.status === 'PENDING'
-                            ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                            : 'bg-rose-950 text-rose-300 border border-rose-800'
-                        }`}>
-                          {a.status}
-                        </span>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {assignments.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-slate-500">
+                        No assignments configured.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    assignments.map((a) => (
+                      <tr key={a.id} className="hover:bg-slate-800/40">
+                        <td className="p-3 font-medium text-purple-300">
+                          {a.manager_username || a.manager_email || a.manager_id}
+                        </td>
+                        <td className="p-3 font-medium text-emerald-300">
+                          {a.employee_username || a.employee_email || a.employee_id}
+                        </td>
+                        <td className="p-3 text-slate-400">{a.assigned_at?.split('T')[0] || a.created_at?.split('T')[0] || '—'}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            a.status === 'APPROVED'
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                              : a.status === 'PENDING'
+                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                              : 'bg-rose-950 text-rose-300 border border-rose-800'
+                          }`}>
+                            {a.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -1163,14 +1167,14 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       {/* ── View: Projects, Ledgers & Vault */}
       {currentView === 'admin_catalog' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-3">
             <div>
               <h1 className="text-lg font-bold text-slate-100">Master Financial Catalog & Vault</h1>
               <p className="text-xs text-slate-400 mt-0.5">
                 Maintain accounting ledger heads, projects, vault balance adjustments, and period locks.
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setAdjustmentModalOpen(true)}
@@ -1367,7 +1371,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       {/* ── View: Company Receipts */}
       {currentView === 'admin_receipts' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-3">
             <div>
               <h1 className="text-lg font-bold text-slate-100">Company Inbound Receipts</h1>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -1384,7 +1388,8 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
-            <table className="w-full text-left text-xs text-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
               <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                 <tr>
                   <th className="p-3">Receipt Date</th>
@@ -1448,6 +1453,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 )}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}
@@ -2344,7 +2350,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       {/* ── View: Operations & Monitoring */}
       {currentView === 'admin_operations' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-3">
             <div>
               <h1 className="text-lg font-bold text-slate-100">Production Operations & Observability</h1>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -2421,65 +2427,67 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 </p>
               </div>
             </div>
-            <table className="w-full text-left text-xs text-slate-200">
-              <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
-                <tr>
-                  <th className="p-3">Backup File</th>
-                  <th className="p-3">Storage Engine</th>
-                  <th className="p-3">Created At</th>
-                  <th className="p-3">Size</th>
-                  <th className="p-3">SHA256 Checksum</th>
-                  <th className="p-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
-                {backups.length === 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
+                <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-slate-500 font-sans">
-                      No backups generated yet.
-                    </td>
+                    <th className="p-3">Backup File</th>
+                    <th className="p-3">Storage Engine</th>
+                    <th className="p-3">Created At</th>
+                    <th className="p-3">Size</th>
+                    <th className="p-3">SHA256 Checksum</th>
+                    <th className="p-3 text-right">Actions</th>
                   </tr>
-                ) : (
-                  paginatedBackups.map((bk) => (
-                    <tr key={bk.backup_id} className="hover:bg-slate-800/40">
-                      <td className="p-3 font-semibold text-slate-100">{bk.filename || bk.backup_id}</td>
-                      <td className="p-3 font-sans">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
-                          Supabase Storage
-                        </span>
-                      </td>
-                      <td className="p-3 text-slate-400">{bk.created_at?.split('.')[0]?.replace('T', ' ')}</td>
-                      <td className="p-3 text-slate-300">{(bk.size_bytes / 1024).toFixed(1)} KB</td>
-                      <td className="p-3 text-slate-500 truncate max-w-[140px]">{bk.checksum_sha256}</td>
-                      <td className="p-3 text-right font-sans space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadBackup(bk.backup_id)}
-                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-400 text-[10px] font-semibold cursor-pointer"
-                        >
-                          Download
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleVerifyBackup(bk.backup_id)}
-                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 text-[10px] font-semibold cursor-pointer"
-                        >
-                          Verify PRAGMA
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isSubmitting}
-                          onClick={() => handleRestoreBackup(bk.backup_id)}
-                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 text-[10px] font-semibold cursor-pointer disabled:opacity-50"
-                        >
-                          Restore
-                        </button>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                  {backups.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-slate-500 font-sans">
+                        No backups generated yet.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    paginatedBackups.map((bk) => (
+                      <tr key={bk.backup_id} className="hover:bg-slate-800/40">
+                        <td className="p-3 font-semibold text-slate-100">{bk.filename || bk.backup_id}</td>
+                        <td className="p-3 font-sans">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                            Supabase Storage
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-400">{bk.created_at?.split('.')[0]?.replace('T', ' ')}</td>
+                        <td className="p-3 text-slate-300">{(bk.size_bytes / 1024).toFixed(1)} KB</td>
+                        <td className="p-3 text-slate-500 truncate max-w-[140px]">{bk.checksum_sha256}</td>
+                        <td className="p-3 text-right font-sans space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadBackup(bk.backup_id)}
+                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-400 text-[10px] font-semibold cursor-pointer"
+                          >
+                            Download
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleVerifyBackup(bk.backup_id)}
+                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 text-[10px] font-semibold cursor-pointer"
+                          >
+                            Verify PRAGMA
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSubmitting}
+                            onClick={() => handleRestoreBackup(bk.backup_id)}
+                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 text-[10px] font-semibold cursor-pointer disabled:opacity-50"
+                          >
+                            Restore
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
             <TablePagination
               currentPage={backupsPage}
               totalItems={backups.length}
@@ -2502,7 +2510,8 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 </p>
               </div>
             </div>
-            <table className="w-full text-left text-xs text-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
               <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                 <tr>
                   <th className="p-3">Timestamp</th>
@@ -2542,6 +2551,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 )}
               </tbody>
             </table>
+            </div>
             <TablePagination
               currentPage={errorsPage}
               totalItems={recentErrors.length}
@@ -2622,7 +2632,8 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
               </span>
             </div>
 
-            <table className="w-full text-left text-xs text-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
               <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                 <tr>
                   <th className="p-3">Timestamp</th>
@@ -2706,6 +2717,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 )}
               </tbody>
             </table>
+            </div>
             <TablePagination
               currentPage={auditPage}
               totalItems={filteredAuditEvents.length}
