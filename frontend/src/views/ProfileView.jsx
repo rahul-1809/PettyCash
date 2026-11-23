@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, Shield, Bell, Check, Save } from 'lucide-react';
+import { User, Mail, Shield, Bell, Check, Save, Loader2 } from 'lucide-react';
 import { api } from '../api';
 
 export default function ProfileView({ user, addToast }) {
