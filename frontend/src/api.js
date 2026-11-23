@@ -385,15 +385,17 @@ export const api = {
     request('/notifications/test-email', { method: 'POST' }),
 
   // ── Spreadsheet Sessions (Compatibility Utility)
-  getDefaultData: () => request('/default-data'),
+  getDefaultData: (options) => request('/default-data', options),
+  getProjectCategories: (options) => request('/project-categories', options),
+  addProjectCategory: (name) => request('/project-categories', { method: 'POST', body: { name } }),
   uploadSpreadsheet: (file) => {
     const formData = new FormData();
     formData.append('file', file);
     return request('/upload', { method: 'POST', body: formData });
   },
   recalculateSpreadsheet: (data) => request('/recalculate', { method: 'POST', body: data }),
-  listSpreadsheetSessions: () => request('/sessions'),
-  getSpreadsheetSession: (id) => request(`/sessions/${id}`),
+  listSpreadsheetSessions: (options) => request('/sessions', options),
+  getSpreadsheetSession: (id, options) => request(`/sessions/${id}`, options),
   createSpreadsheetSession: (data) => request('/sessions', { method: 'POST', body: data }),
   updateSpreadsheetSession: (id, data) => request(`/sessions/${id}`, { method: 'PUT', body: data }),
   renameSpreadsheetSession: (id, name) => request(`/sessions/${id}/rename`, { method: 'PATCH', body: { name } }),

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { api } from '../api';
 import {
   Upload, Download, Plus, Trash2, Edit2, Search,
   FileSpreadsheet, Calendar, IndianRupee, TrendingUp,
@@ -91,6 +92,7 @@ export default function SpreadsheetTool() {
   const [renameSessionId, setRenameSessionId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const loadedSessionsCacheRef = useRef(new Map());
 
   // ── Filtering & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -137,20 +139,22 @@ export default function SpreadsheetTool() {
 
   // ─── Session List ─────────────────────────────────────────────────────────
 
-  const fetchSessions = useCallback(async () => {
+  const fetchSessions = useCallback(async (bypassCache = false) => {
     setSessionsLoading(true);
     try {
-      const res = await fetch('/api/sessions');
-      if (res.ok) setSessions(await res.json());
-    } catch (e) { console.error(e); }
-    finally { setSessionsLoading(false); }
+      const data = await api.listSpreadsheetSessions({ bypassCache });
+      if (Array.isArray(data)) setSessions(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSessionsLoading(false);
+    }
   }, []);
 
   const fetchProjectCategories = useCallback(async () => {
     try {
-      const res = await fetch('/api/project-categories');
-      if (!res.ok) throw new Error('Failed to load project categories');
-      setGlobalProjects(await res.json());
+      const data = await api.getProjectCategories();
+      if (Array.isArray(data)) setGlobalProjects(data);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -160,12 +164,8 @@ export default function SpreadsheetTool() {
     const project = name.trim();
     if (!project) return;
     try {
-      const res = await fetch('/api/project-categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: project }),
-      });
-      if (!res.ok) throw new Error('Failed to save project category');
+      await api.addProjectCategory(project);
+      api.invalidateCache('/project-categories');
       setGlobalProjects(previous => Array.from(new Set([...previous, project])).sort());
     } catch (err) {
       showToast(err.message, 'error');
@@ -188,9 +188,7 @@ export default function SpreadsheetTool() {
   const loadDefaultData = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/default-data');
-      if (!res.ok) throw new Error('Failed to load default data');
-      const data = await res.json();
+      const data = await api.getDefaultData();
       applyData(data);
       setActiveSessionId(null);
       setActiveSessionName('');
@@ -218,28 +216,21 @@ export default function SpreadsheetTool() {
 
     setLoading(true);
     try {
-      const res = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Petty Cash ${new Date().toLocaleString('en-IN', {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-          })}`,
-          opening_balance: 0,
-          start_date: '',
-          end_date: '',
-          transactions: [],
-          source_excel_base64: null,
-          source_excel_filename: null,
-        }),
+      const created = await api.createSpreadsheetSession({
+        name: `Petty Cash ${new Date().toLocaleString('en-IN', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        })}`,
+        opening_balance: 0,
+        start_date: '',
+        end_date: '',
+        transactions: [],
+        source_excel_base64: null,
+        source_excel_filename: null,
       });
-      if (!res.ok) throw new Error('Failed to create a new session');
-      const created = await res.json();
-      const sessionRes = await fetch(`/api/sessions/${created.id}`);
-      if (!sessionRes.ok) throw new Error('Failed to load the new session');
-      const session = await sessionRes.json();
+      const session = await api.getSpreadsheetSession(created.id);
       applyData(session);
+      loadedSessionsCacheRef.current.set(session.id, session);
       setActiveSessionId(session.id);
       setActiveSessionName(session.name);
       setHasUnsavedChanges(false);
@@ -247,7 +238,7 @@ export default function SpreadsheetTool() {
       setSelectedProject('ALL');
       setSelectedLedger('ALL');
       setActiveTab('transactions');
-      await fetchSessions();
+      await fetchSessions(true);
       showToast('New empty session created.');
       return session;
     } catch (err) {
@@ -264,11 +255,22 @@ export default function SpreadsheetTool() {
     if (hasUnsavedChanges && activeSessionId) {
       if (!window.confirm('You have unsaved changes. Leave without saving?')) return;
     }
-    setLoading(true);
+
+    // Instant SWR cache hit: render immediately if already in local cache
+    const cached = loadedSessionsCacheRef.current.get(sessionId);
+    if (cached) {
+      applyData(cached);
+      setActiveSessionId(cached.id);
+      setActiveSessionName(cached.name);
+      setHasUnsavedChanges(false);
+      setCurrentPage(1);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      const res = await fetch(`/api/sessions/${sessionId}`);
-      if (!res.ok) throw new Error('Session not found');
-      const data = await res.json();
+      const data = await api.getSpreadsheetSession(sessionId);
+      loadedSessionsCacheRef.current.set(sessionId, data);
       applyData(data);
       setActiveSessionId(data.id);
       setActiveSessionName(data.name);
@@ -277,7 +279,9 @@ export default function SpreadsheetTool() {
       showToast(`Loaded: "${data.name}"`);
     } catch (err) {
       showToast(err.message, 'error');
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ─── Save current state to active session ─────────────────────────────────
@@ -291,22 +295,20 @@ export default function SpreadsheetTool() {
     }
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/sessions/${activeSessionId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          opening_balance: openingBalance,
-          start_date: startDate,
-          end_date: endDate,
-          transactions,
-          source_excel_base64: sourceExcelBase64,
-          source_excel_filename: sourceExcelFilename,
-        }),
+      const updated = await api.updateSpreadsheetSession(activeSessionId, {
+        opening_balance: openingBalance,
+        start_date: startDate,
+        end_date: endDate,
+        transactions,
+        source_excel_base64: sourceExcelBase64,
+        source_excel_filename: sourceExcelFilename,
       });
-      if (!res.ok) throw new Error('Save failed');
+      if (updated) {
+        loadedSessionsCacheRef.current.set(activeSessionId, updated);
+      }
       setHasUnsavedChanges(false);
       showToast('Session saved!');
-      fetchSessions();
+      fetchSessions(true);
     } catch (err) {
       showToast(err.message, 'error');
     } finally { setIsSaving(false); }
@@ -326,28 +328,23 @@ export default function SpreadsheetTool() {
   const handleSaveAs = async () => {
     setIsSaving(true);
     try {
-      const res = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: saveAsName.trim() || `Petty Cash ${startDate} – ${endDate}`,
-          opening_balance: openingBalance,
-          start_date: startDate,
-          end_date: endDate,
-          transactions,
-          source_excel_base64: sourceExcelBase64,
-          source_excel_filename: sourceExcelFilename,
-        }),
+      const newSession = await api.createSpreadsheetSession({
+        name: saveAsName.trim() || `Petty Cash ${startDate} – ${endDate}`,
+        opening_balance: openingBalance,
+        start_date: startDate,
+        end_date: endDate,
+        transactions,
+        source_excel_base64: sourceExcelBase64,
+        source_excel_filename: sourceExcelFilename,
       });
-      if (!res.ok) throw new Error('Failed to save');
-      const newSession = await res.json();
+      loadedSessionsCacheRef.current.set(newSession.id, newSession);
       setActiveSessionId(newSession.id);
       setActiveSessionName(newSession.name);
       setHasUnsavedChanges(false);
       setIsSaveAsModalOpen(false);
       setSaveAsName('');
       showToast(`Saved as "${newSession.name}"!`);
-      fetchSessions();
+      fetchSessions(true);
     } catch (err) {
       showToast(err.message, 'error');
     } finally { setIsSaving(false); }
@@ -359,14 +356,14 @@ export default function SpreadsheetTool() {
     e.stopPropagation();
     if (!window.confirm(`Delete session "${sessionName}"? This cannot be undone.`)) return;
     try {
-      const res = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
+      await api.deleteSpreadsheetSession(sessionId);
+      loadedSessionsCacheRef.current.delete(sessionId);
       if (activeSessionId === sessionId) {
         setActiveSessionId(null);
         setActiveSessionName('');
       }
       showToast(`Deleted "${sessionName}"`);
-      fetchSessions();
+      fetchSessions(true);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -377,16 +374,15 @@ export default function SpreadsheetTool() {
   const handleRenameSession = async (sessionId) => {
     if (!renameValue.trim()) { setRenameSessionId(null); return; }
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/rename`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: renameValue.trim() }),
-      });
-      if (!res.ok) throw new Error('Rename failed');
+      const renamed = await api.renameSpreadsheetSession(sessionId, renameValue.trim());
+      if (loadedSessionsCacheRef.current.has(sessionId)) {
+        const cached = loadedSessionsCacheRef.current.get(sessionId);
+        loadedSessionsCacheRef.current.set(sessionId, { ...cached, name: renameValue.trim() });
+      }
       if (activeSessionId === sessionId) setActiveSessionName(renameValue.trim());
       setRenameSessionId(null);
       setRenameValue('');
-      fetchSessions();
+      fetchSessions(true);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -406,13 +402,9 @@ export default function SpreadsheetTool() {
         return;
       }
     }
-    const formData = new FormData();
-    formData.append('file', file);
     setLoading(true);
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Upload failed'); }
-      const data = await res.json();
+      const data = await api.uploadSpreadsheet(file);
       applyData(data);
       setActiveSessionId(uploadSessionId);
       setActiveSessionName(data.filename || file.name.replace(/\.[^.]+$/, ''));
@@ -430,13 +422,12 @@ export default function SpreadsheetTool() {
 
   const triggerRecalculate = async (opBal, sDate, eDate, txs) => {
     try {
-      const res = await fetch('/api/recalculate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ opening_balance: opBal, start_date: sDate, end_date: eDate, transactions: txs }),
+      const result = await api.recalculateSpreadsheet({
+        opening_balance: opBal,
+        start_date: sDate,
+        end_date: eDate,
+        transactions: txs,
       });
-      if (!res.ok) throw new Error('Recalculate failed');
-      const result = await res.json();
       setSummary(result);
       setTransactions(result.transactions);
       setHasUnsavedChanges(true);
@@ -762,7 +753,7 @@ export default function SpreadsheetTool() {
       {/* Sidebar footer: refresh */}
       <div className="px-3 py-2.5 border-t border-slate-800 bg-slate-950/60 shrink-0">
         <button
-          onClick={fetchSessions}
+          onClick={() => fetchSessions(true)}
           className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-slate-300 hover:text-slate-100 hover:bg-slate-800 bg-slate-900 rounded-md border border-slate-800 transition cursor-pointer"
         >
           <RefreshCw className="w-3.5 h-3.5 text-emerald-400" /> Refresh Sessions

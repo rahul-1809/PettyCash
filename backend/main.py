@@ -1773,12 +1773,18 @@ def acknowledge_alert_endpoint(req: AlertAcknowledgeRequest, admin: dict = Depen
 
 # ─── Default Data ────────────────────────────────────────────────────────────
 
+_CACHED_DEFAULT_DATA = None
+
 @app.get("/api/default-data", tags=["Spreadsheet Sessions"], summary="Load default spreadsheet data")
 def get_default_data():
+    global _CACHED_DEFAULT_DATA
+    if _CACHED_DEFAULT_DATA is not None:
+        return _CACHED_DEFAULT_DATA
     if not os.path.exists(DEFAULT_EXCEL_PATH):
         raise HTTPException(status_code=404, detail="Default Excel file not found.")
     try:
         data = parse_petty_cash_file(DEFAULT_EXCEL_PATH)
+        _CACHED_DEFAULT_DATA = data
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse default file: {str(e)}")

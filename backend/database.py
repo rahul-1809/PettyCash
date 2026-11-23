@@ -9,6 +9,7 @@ import atexit
 import json
 import os
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -231,15 +232,44 @@ def _seed_project_categories():
         conn.commit()
 
 
+_SESSION_LIST_CACHE = None
+_SESSION_LIST_CACHE_TS = 0.0
+_PROJECT_CATEGORIES_CACHE = None
+_PROJECT_CATEGORIES_CACHE_TS = 0.0
+_SESSION_DATA_CACHE = {}  # session_id -> (ts, data)
+
+
+def invalidate_session_caches(session_id: Optional[str] = None):
+    global _SESSION_LIST_CACHE, _PROJECT_CATEGORIES_CACHE, _SESSION_DATA_CACHE
+    _SESSION_LIST_CACHE = None
+    _PROJECT_CATEGORIES_CACHE = None
+    if session_id:
+        _SESSION_DATA_CACHE.pop(session_id, None)
+    else:
+        _SESSION_DATA_CACHE.clear()
+
+
 def list_project_categories() -> List[str]:
+    global _PROJECT_CATEGORIES_CACHE, _PROJECT_CATEGORIES_CACHE_TS
+    is_testing = os.getenv("TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
+    now = time.time()
+    if not is_testing and _PROJECT_CATEGORIES_CACHE is not None and (now - _PROJECT_CATEGORIES_CACHE_TS < 60.0):
+        return _PROJECT_CATEGORIES_CACHE
+
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT name FROM project_categories ORDER BY name"
         ).fetchall()
-        return [row["name"] for row in rows]
+        result = [row["name"] for row in rows]
+        if not is_testing:
+            _PROJECT_CATEGORIES_CACHE = result
+            _PROJECT_CATEGORIES_CACHE_TS = now
+        return result
 
 
 def add_project_category(name: str) -> str:
+    global _PROJECT_CATEGORIES_CACHE
+    _PROJECT_CATEGORIES_CACHE = None
     project = name.strip()
     if not project:
         return ""
@@ -260,6 +290,8 @@ def add_project_category(name: str) -> str:
 
 
 def add_project_categories(names: List[str]):
+    global _PROJECT_CATEGORIES_CACHE
+    _PROJECT_CATEGORIES_CACHE = None
     for name in names:
         add_project_category(name)
 
@@ -269,13 +301,23 @@ def now_iso() -> str:
 
 
 def list_sessions() -> List[dict]:
+    global _SESSION_LIST_CACHE, _SESSION_LIST_CACHE_TS
+    is_testing = os.getenv("TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
+    now = time.time()
+    if not is_testing and _SESSION_LIST_CACHE is not None and (now - _SESSION_LIST_CACHE_TS < 45.0):
+        return _SESSION_LIST_CACHE
+
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT id, name, created_at, updated_at, opening_balance, "
             "start_date, end_date, tx_count FROM sessions "
             "ORDER BY updated_at DESC"
         ).fetchall()
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+        if not is_testing:
+            _SESSION_LIST_CACHE = result
+            _SESSION_LIST_CACHE_TS = now
+        return result
 
 
 def create_session(
@@ -288,6 +330,7 @@ def create_session(
     source_excel_base64: Optional[str] = None,
     source_excel_filename: Optional[str] = None,
 ) -> dict:
+    invalidate_session_caches()
     session_id = str(uuid.uuid4())
     ts = now_iso()
     tx_count = len(transactions)
@@ -325,6 +368,13 @@ def create_session(
 
 
 def get_session(session_id: str) -> Optional[dict]:
+    is_testing = os.getenv("TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
+    now = time.time()
+    if not is_testing and session_id in _SESSION_DATA_CACHE:
+        cached_ts, cached_data = _SESSION_DATA_CACHE[session_id]
+        if now - cached_ts < 60.0:
+            return cached_data
+
     marker = _placeholder()
     with get_connection() as conn:
         row = conn.execute(
@@ -336,6 +386,8 @@ def get_session(session_id: str) -> Optional[dict]:
         data = dict(row)
         if isinstance(data["data"], str):
             data["data"] = json.loads(data["data"])
+        if not is_testing:
+            _SESSION_DATA_CACHE[session_id] = (now, data)
         return data
 
 
@@ -350,6 +402,7 @@ def update_session(
     source_excel_base64: Optional[str] = None,
     source_excel_filename: Optional[str] = None,
 ) -> Optional[dict]:
+    invalidate_session_caches(session_id)
     existing = get_session(session_id)
     if existing and existing.get("data"):
         old_data = existing["data"]
@@ -399,6 +452,7 @@ def update_session(
 
 
 def rename_session(session_id: str, new_name: str) -> Optional[dict]:
+    invalidate_session_caches(session_id)
     marker = _placeholder()
     with get_connection() as conn:
         conn.execute(
@@ -411,6 +465,7 @@ def rename_session(session_id: str, new_name: str) -> Optional[dict]:
 
 
 def delete_session(session_id: str) -> bool:
+    invalidate_session_caches(session_id)
     marker = _placeholder()
     with get_connection() as conn:
         cur = conn.execute(
