@@ -965,7 +965,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                     <div>
                       <div className="font-semibold text-slate-200">{r.purpose}</div>
                       <div className="text-slate-400 text-[11px] mt-0.5">
-                        Requester: {r.requester_username || r.requester_id} • Manager: {r.approving_manager_id} • {r.request_date}
+                        Requester: {r.requester_username || r.requester_id} • Manager: {r.manager_username || r.approving_manager_id} • {r.request_date}
                       </div>
                     </div>
                     <div className="flex items-center gap-3">

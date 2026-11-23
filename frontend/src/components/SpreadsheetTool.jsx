@@ -652,7 +652,7 @@ export default function SpreadsheetTool() {
           </button>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="sidebar-close-button p-1.5 rounded-md hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition cursor-pointer"
+            className="p-1.5 rounded-md hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition cursor-pointer"
             title="Close Sessions Panel"
             aria-label="Close Sessions Panel"
           >
@@ -729,7 +729,9 @@ export default function SpreadsheetTool() {
             </div>
 
             {/* Action buttons */}
-            <div className="mt-2 pt-2 border-t border-slate-800/60 flex items-center justify-end gap-1 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+            <div className={`mt-2 pt-2 border-t border-slate-800/60 flex items-center justify-end gap-1 transition-opacity ${
+              isMobile ? 'opacity-100' : 'lg:opacity-0 lg:group-hover:opacity-100'
+            }`}>
               <button
                 onClick={e => { e.stopPropagation(); handleExportZip(sess.id, sess.name); }}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-900 hover:bg-emerald-950 text-slate-300 hover:text-emerald-300 border border-slate-800 text-[10px] font-medium transition cursor-pointer"
@@ -866,7 +868,7 @@ export default function SpreadsheetTool() {
 
         {/* ── Desktop Inline Sidebar ───────────────────────────────────── */}
         {sidebarOpen && (
-          <aside className="sessions-sidebar hidden lg:flex w-72 bg-slate-900 border-r border-slate-800 flex-col shrink-0 overflow-hidden text-slate-200">
+          <aside className="hidden lg:flex w-72 bg-slate-900 border-r border-slate-800 flex-col shrink-0 overflow-hidden text-slate-200">
             {renderSessionListContent(false)}
           </aside>
         )}
@@ -874,11 +876,11 @@ export default function SpreadsheetTool() {
         {/* ── Mobile Session History Modal Dialog ──────────────────────── */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 lg:hidden"
+            className="fixed inset-0 z-[60] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 lg:hidden"
             onClick={() => setSidebarOpen(false)}
           >
             <div
-              className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-sm max-h-[85vh] flex flex-col shadow-2xl overflow-hidden text-slate-100"
+              className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-sm sm:max-w-md max-h-[85vh] flex flex-col shadow-2xl overflow-hidden text-slate-100"
               onClick={e => e.stopPropagation()}
             >
               {renderSessionListContent(true)}

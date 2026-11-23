@@ -219,31 +219,36 @@ export default function ProfileView({ user, addToast }) {
             </div>
 
             {/* Test Email Action Row */}
-            <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-medium text-slate-300">Verify Email Delivery</div>
-                <div className="text-[11px] text-slate-500">
-                  Send a test email to <span className="text-slate-300 font-mono">{user?.email}</span> to verify SMTP configuration.
+            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium text-slate-300">Verify Email Delivery</div>
+                  <div className="text-[11px] text-slate-500">
+                    Send a test email to <span className="text-slate-300 font-mono">{user?.email}</span> to verify delivery routing.
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  disabled={testingEmail || !emailEnabled}
+                  onClick={handleSendTestEmail}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {testingEmail ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                      <span>Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Send Test Email</span>
+                    </>
+                  )}
+                </button>
               </div>
-              <button
-                type="button"
-                disabled={testingEmail || !emailEnabled}
-                onClick={handleSendTestEmail}
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition"
-              >
-                {testingEmail ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                    <span>Sending...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Send Test Email</span>
-                  </>
-                )}
-              </button>
+              <p className="text-[10px] text-slate-500">
+                Tip: Cloud hosting platforms (like Render Free tier) block outbound SMTP ports (587/465). For guaranteed delivery on Render, configure <code className="text-emerald-400 bg-slate-950 px-1 py-0.5 rounded">RESEND_API_KEY</code> in environment variables to send over HTTPS (Port 443).
+              </p>
             </div>
           </div>
         )}

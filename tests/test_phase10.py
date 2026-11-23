@@ -438,6 +438,26 @@ class Phase10Tests(unittest.TestCase):
             self.assertTrue(res.json()["success"])
             self.assertEqual(res.json()["recipient"], self.admin["email"])
 
+    def test_10_list_requests_joins_requester_username_and_resend_support(self):
+        """Test list_requests populates requester_username and manager_username properly."""
+        from unittest.mock import patch
+        from backend.request_service import list_requests
+        from backend.notification_service import send_email
+
+        # 1. Verify list_requests returns requester_username
+        reqs = list_requests(self.manager["id"], "Manager")
+        self.assertIsInstance(reqs, list)
+        if len(reqs) > 0:
+            for r in reqs:
+                self.assertIn("requester_username", r)
+                self.assertIn("manager_username", r)
+
+        # 2. Test send_email with RESEND_API_KEY dispatches via _send_via_resend
+        with patch.dict("os.environ", {"RESEND_API_KEY": "re_test_123"}), \
+             patch("backend.notification_service._send_via_resend") as mock_resend:
+            send_email("test@example.com", "Test Subject", "Test Body")
+            self.assertTrue(mock_resend.called)
+
 
 if __name__ == "__main__":
     unittest.main()

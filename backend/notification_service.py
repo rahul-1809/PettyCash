@@ -1,12 +1,16 @@
 """Notification persistence with independently configurable delivery channels."""
 
+import json
 import logging
 import os
 import queue
 import secrets
 import smtplib
+import socket
 import threading
 import time
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 from typing import Iterable, Optional
 
@@ -52,7 +56,43 @@ def _ensure_worker_started() -> None:
                 _WORKER_STARTED = True
 
 
+def _send_via_resend(recipient: str, subject: str, body: str) -> None:
+    """Deliver email via Resend HTTPS API (Port 443) - works on Render Free tier."""
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("RESEND_API_KEY is not configured.")
+    sender = os.getenv("RESEND_FROM") or os.getenv("SMTP_SENDER") or "PettyCash <onboarding@resend.dev>"
+    url = "https://api.resend.com/emails"
+    payload = json.dumps({
+        "from": sender,
+        "to": [recipient],
+        "subject": subject,
+        "text": body,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "PettyCash-Pro/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status not in (200, 201):
+                raise RuntimeError(f"Resend API error status {resp.status}")
+            logger.info(f"Dispatched email '{subject}' to {recipient} via Resend HTTPS API")
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend delivery failed: {err_body}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Resend HTTPS request failed: {exc}") from exc
+
+
 def _send_email_with_retry(recipient_email: str, subject: str, body: str, max_retries: int = 3) -> bool:
+    resend_api_key = os.getenv("RESEND_API_KEY")
     host = os.getenv("SMTP_HOST")
     port_raw = os.getenv("SMTP_PORT", "587")
     port = int(port_raw) if port_raw and str(port_raw).isdigit() else 587
@@ -60,8 +100,8 @@ def _send_email_with_retry(recipient_email: str, subject: str, body: str, max_re
     password = os.getenv("SMTP_PASSWORD")
     sender = os.getenv("SMTP_SENDER")
 
-    if not all((host, username, password, sender)):
-        logger.warning(f"SMTP configuration incomplete; skipping dispatch to {recipient_email}")
+    if not resend_api_key and not all((host, username, password, sender)):
+        logger.warning(f"Email service configuration incomplete; skipping dispatch to {recipient_email}")
         return False
 
     for attempt in range(1, max_retries + 1):
@@ -96,7 +136,8 @@ def enqueue_email(recipient_email: str, subject: str, body: str) -> None:
 
 
 def send_test_email(recipient_email: str, recipient_name: str = "User") -> None:
-    """Synchronously send a test email to verify credentials and SMTP routing."""
+    """Synchronously send a test email to verify credentials and delivery routing."""
+    resend_api_key = os.getenv("RESEND_API_KEY")
     host = os.getenv("SMTP_HOST")
     port_raw = os.getenv("SMTP_PORT", "587")
     port = int(port_raw) if port_raw and str(port_raw).isdigit() else 587
@@ -104,15 +145,19 @@ def send_test_email(recipient_email: str, recipient_name: str = "User") -> None:
     password = os.getenv("SMTP_PASSWORD")
     sender = os.getenv("SMTP_SENDER")
 
-    if not all((host, username, password, sender)):
-        raise RuntimeError("SMTP configuration is incomplete. Check SMTP_HOST, SMTP_PORT, SMTP_USERNAME, and SMTP_PASSWORD.")
+    if not resend_api_key and not all((host, username, password, sender)):
+        raise RuntimeError(
+            "Email service configuration is incomplete. "
+            "Set RESEND_API_KEY (recommended for Render HTTPS delivery) or configure SMTP_HOST, SMTP_PORT, SMTP_USERNAME, and SMTP_PASSWORD."
+        )
 
+    channel_name = "Resend HTTPS API (Port 443)" if resend_api_key else f"SMTP ({host}:{port})"
     app_url = os.getenv("APP_BASE_URL", "https://pettycash.ajassociate.online").rstrip("/")
     subject = "PettyCash Pro - Notification Delivery Test"
     body = (
         f"Hello {recipient_name},\n\n"
         f"This is a confirmation test email from PettyCash Pro.\n"
-        f"Your transactional email notification channel is actively connected and functioning properly.\n\n"
+        f"Your transactional email notification channel is actively connected and functioning properly via {channel_name}.\n\n"
         f"System URL: {app_url}\n\n"
         f"---\nPettyCash Notification System"
     )
@@ -314,27 +359,54 @@ def send_email(
     recipient: str,
     subject: str,
     body: str,
-    host: str,
-    port: int,
-    username: str,
-    password: str,
-    sender: str,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    sender: Optional[str] = None,
 ) -> None:
+    # 1. Primary priority: If RESEND_API_KEY is provided, deliver over HTTPS port 443
+    # (Bypasses Render Free tier outbound SMTP port blocks completely)
+    if os.getenv("RESEND_API_KEY"):
+        _send_via_resend(recipient, subject, body)
+        return
+
+    # 2. SMTP Delivery
+    host = host or os.getenv("SMTP_HOST")
+    port = port or int(os.getenv("SMTP_PORT", "587"))
+    username = username or os.getenv("SMTP_USERNAME")
+    password = password or os.getenv("SMTP_PASSWORD")
+    sender = sender or os.getenv("SMTP_SENDER")
+
     if not all((host, username, password, sender)):
-        raise RuntimeError("SMTP configuration is incomplete.")
+        raise RuntimeError(
+            "Email service is not configured. "
+            "Please configure RESEND_API_KEY (recommended for Render HTTPS delivery) "
+            "or set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, and SMTP_PASSWORD."
+        )
+
     message = EmailMessage()
     message["From"] = sender
     message["To"] = recipient
     message["Subject"] = subject
     message.set_content(body)
 
-    # Use SMTP_SSL for port 465, or SMTP with STARTTLS for port 587/25
-    if port == 465:
-        with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
-            smtp.login(username, password)
-            smtp.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=20) as smtp:
-            smtp.starttls()
-            smtp.login(username, password)
-            smtp.send_message(message)
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
+                smtp.login(username, password)
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as smtp:
+                smtp.starttls()
+                smtp.login(username, password)
+                smtp.send_message(message)
+    except OSError as exc:
+        if getattr(exc, "errno", None) == 101 or "unreachable" in str(exc).lower():
+            raise RuntimeError(
+                "Outbound SMTP is unreachable ([Errno 101] Network is unreachable). "
+                "Cloud platforms like Render Free tier block outbound SMTP ports (25, 465, 587). "
+                "To resolve on Render Free tier, set 'RESEND_API_KEY' in Render Environment Variables to send via HTTPS (Port 443), "
+                "or upgrade your Render service to a paid plan."
+            ) from exc
+        raise

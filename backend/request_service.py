@@ -457,12 +457,19 @@ def list_requests(
     with database.get_connection() as connection:
         rows = connection.execute(
             f"""
-            SELECT r.id, r.request_date, r.amount, r.purpose, r.status,
+            SELECT r.id, r.request_date, r.amount, r.purpose, r.notes, r.status,
+                   r.change_reason, r.rejection_reason,
+                   COALESCE(r.change_reason, r.rejection_reason) AS decision_reason,
                    r.requester_id, r.approving_manager_id,
-                   p.name AS project_name, l.name AS ledger_name, r.category_name
+                   u_req.username AS requester_username, u_req.email AS requester_email,
+                   u_mgr.username AS manager_username, u_mgr.email AS manager_email,
+                   p.name AS project_name, l.name AS ledger_name, r.category_name,
+                   r.created_at, r.updated_at
             FROM petty_cash_requests r
             JOIN projects p ON p.id=r.project_id
             JOIN ledgers l ON l.id=r.ledger_id
+            LEFT JOIN users u_req ON u_req.id=r.requester_id
+            LEFT JOIN users u_mgr ON u_mgr.id=r.approving_manager_id
             {clause}
             ORDER BY r.created_at DESC
             {pagination_clause}

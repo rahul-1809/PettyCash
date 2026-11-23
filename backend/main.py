@@ -678,7 +678,7 @@ def create_user(
             "password": os.getenv("SMTP_PASSWORD", ""),
             "sender": os.getenv("SMTP_SENDER", ""),
         }
-        smtp_configured = all(
+        smtp_configured = bool(os.getenv("RESEND_API_KEY")) or all(
             (
                 smtp_values["host"],
                 smtp_values["username"],
@@ -687,7 +687,7 @@ def create_user(
             )
         )
         if os.getenv("APP_ENV", "development") == "production" and not smtp_configured:
-            raise HTTPException(status_code=503, detail="SMTP is required to provision users in production.")
+            raise HTTPException(status_code=503, detail="Email service (RESEND_API_KEY or SMTP) is required to provision users in production.")
 
         user, onboarding_token = provision_user(
             req.username, req.email, req.role, admin["id"]
