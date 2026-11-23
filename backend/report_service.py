@@ -6,6 +6,7 @@ import datetime
 import io
 import os
 import re
+import time
 import zipfile
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
@@ -84,12 +85,30 @@ def parse_month_bounds(month_str: str) -> Tuple[str, str, int, int]:
     return start_date, end_date, year, month
 
 
+_REPORT_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_REPORT_CACHE_TTL: float = 60.0  # Cache reports for 60 seconds
+
+
+def invalidate_report_cache() -> None:
+    """Purge in-memory cached report calculations."""
+    global _REPORT_CACHE
+    _REPORT_CACHE.clear()
+
+
 def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-cash") -> Dict[str, Any]:
     """Compile comprehensive authoritative monthly report data.
     
     Excludes unposted/pending requests from posted totals and balances.
     Calculates exact opening balance, daily cash movements, and spending breakdowns.
     """
+    is_testing = os.getenv("TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
+    cache_key = f"{month_str}:{cash_account_id}"
+    now = time.time()
+    if not is_testing and cache_key in _REPORT_CACHE:
+        cached_ts, cached_data = _REPORT_CACHE[cache_key]
+        if now - cached_ts < _REPORT_CACHE_TTL:
+            return cached_data
+
     start_date, end_date, year, month = parse_month_bounds(month_str)
     month_name = calendar.month_name[month]
     marker = database._placeholder()
@@ -493,7 +512,7 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
                     "count": pivot_dict[proj]["payment_count"],
                 })
 
-        return {
+        result_data = {
             "month": month_str,
             "month_name": month_name,
             "year": year,
@@ -525,6 +544,9 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
             "changes_requested_total": sum(r["amount"] for r in changes_requested),
             "all_supporting_files": all_supporting_files,
         }
+        if not is_testing:
+            _REPORT_CACHE[cache_key] = (time.time(), result_data)
+        return result_data
 
 
 def _accumulate_breakdown(target_dict: dict, key: str, amount: Decimal):

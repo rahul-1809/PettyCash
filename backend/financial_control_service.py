@@ -16,6 +16,17 @@ except ImportError:
     from notification_service import create_notification
 
 
+def _invalidate_cache():
+    try:
+        try:
+            from backend.report_service import invalidate_report_cache
+        except ImportError:
+            from report_service import invalidate_report_cache
+        invalidate_report_cache()
+    except Exception:
+        pass
+
+
 def _validate_date(value: str) -> str:
     try:
         date.fromisoformat(value)
@@ -145,6 +156,7 @@ def close_financial_period(period_id: str, admin_id: str) -> dict:
         )
         connection.commit()
 
+    _invalidate_cache()
     return {
         "id": period_id,
         "status": "CLOSED",
@@ -187,6 +199,7 @@ def reopen_financial_period(period_id: str, admin_id: str) -> dict:
         )
         connection.commit()
 
+    _invalidate_cache()
     return {"id": period_id, "status": "OPEN"}
 
 
@@ -359,6 +372,7 @@ def reverse_posted_request(
         request_id,
     )
 
+    _invalidate_cache()
     return {
         "request_id": request_id,
         "is_reversed": True,
@@ -508,6 +522,7 @@ def reverse_company_receipt(
         )
         connection.commit()
 
+    _invalidate_cache()
     return {
         "receipt_id": receipt_id,
         "is_reversed": True,
@@ -628,6 +643,7 @@ def create_balance_adjustment(
         )
         connection.commit()
 
+    _invalidate_cache()
     return {
         "id": adjustment_id,
         "cash_account_id": cash_account_id,

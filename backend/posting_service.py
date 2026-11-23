@@ -9,10 +9,12 @@ try:
     from backend import database
     from backend.notification_service import create_notification
     from backend.financial_control_service import validate_date_not_in_closed_period
+    from backend.report_service import invalidate_report_cache
 except ImportError:
     import database
     from notification_service import create_notification
     from financial_control_service import validate_date_not_in_closed_period
+    from report_service import invalidate_report_cache
 
 
 def _validate_date(value: str) -> str:
@@ -181,6 +183,10 @@ def post_request(request_id: str, admin_id: str, effective_date: str) -> dict:
             "petty_cash_request",
             request_id,
         )
+    try:
+        invalidate_report_cache()
+    except Exception:
+        pass
     return {
         "request_id": request_id,
         "status": "POSTED",

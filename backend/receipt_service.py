@@ -11,10 +11,12 @@ try:
     from backend import database
     from backend.notification_service import create_notification
     from backend.financial_control_service import validate_date_not_in_closed_period
+    from backend.report_service import invalidate_report_cache
 except ImportError:
     import database
     from notification_service import create_notification
     from financial_control_service import validate_date_not_in_closed_period
+    from report_service import invalidate_report_cache
 
 
 def _amount(value) -> str:
@@ -276,6 +278,10 @@ def create_company_receipt(
         "company_receipt",
         receipt_id,
     )
+    try:
+        invalidate_report_cache()
+    except Exception:
+        pass
     return {
         "id": receipt_id,
         "amount": normalized_amount,

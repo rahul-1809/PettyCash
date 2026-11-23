@@ -144,70 +144,105 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const loadData = async () => {
+  const loadData = async (force = false) => {
     try {
-      setLoading(true);
-      const [
-        cashData,
-        usersData,
-        assignData,
-        projData,
-        ledgData,
-        receiptsData,
-        reqData,
-        periodsData,
-        adjustData,
-        alertsData,
-        metricsData,
-        backupsData,
-      ] = await Promise.all([
-        api.getCashBalance().catch(() => null),
-        api.listUsers().catch(() => []),
-        api.listAssignments().catch(() => []),
-        api.getProjects().catch(() => []),
-        api.getLedgers().catch(() => []),
-        api.listCompanyReceipts().catch(() => []),
-        api.listRequests().catch(() => []),
-        api.listFinancialPeriods().catch(() => []),
-        api.listBalanceAdjustments().catch(() => []),
-        api.getAlerts().catch(() => ({ alerts: [] })),
-        api.getMetrics().catch(() => null),
-        api.listBackups().catch(() => []),
-      ]);
+      if (force) {
+        api.clearCache();
+      }
 
-      setCashBalance(cashData);
-      setUsersList(usersData || []);
-      setAssignments(assignData || []);
-      setProjects(projData || []);
-      setLedgers(ledgData || []);
-      setReceipts(receiptsData || []);
-      if (projData && projData.length > 0 && !receiptProjectId) {
-        setReceiptProjectId(projData[0].id);
-      }
-      if (ledgData && ledgData.length > 0 && !receiptLedgerId) {
-        setReceiptLedgerId(ledgData[0].id);
-      }
-      setPostingsQueue(
-        (reqData || []).filter(
-          (r) => r.status === 'SUPPORTING_UPLOADED' || (r.status === 'APPROVED' && r.supporting_files?.length > 0)
-        )
+      const hasExistingData = (
+        (currentView === 'admin_dashboard' && cashBalance) ||
+        (currentView === 'admin_reports' && monthlyReport && monthlyReport.month === reportMonth) ||
+        (currentView === 'admin_postings' && postingsQueue.length >= 0 && projects.length > 0) ||
+        (currentView === 'admin_receipts' && receipts.length >= 0 && projects.length > 0) ||
+        (currentView === 'admin_catalog' && projects.length > 0) ||
+        (currentView === 'admin_users' && usersList.length > 0) ||
+        (currentView === 'admin_operations' && metrics) ||
+        (currentView === 'admin_audit' && auditEvents.length > 0)
       );
-      setPeriods(periodsData || []);
-      setAdjustments(adjustData || []);
-      setAlerts(alertsData?.alerts || []);
-      setMetrics(metricsData);
-      setBackups(backupsData || []);
 
-      if (currentView === 'admin_reports') {
-        const rep = await api.getMonthlyReport(reportMonth).catch(() => null);
-        setMonthlyReport(rep);
-      } else if (currentView === 'admin_audit') {
-        const audit = await api.listAuditEvents({ limit: 1000 }).catch(() => []);
-        setAuditEvents(audit || []);
-      } else if (currentView === 'admin_operations') {
-        const errs = await api.getErrors(100).catch(() => ({ errors: [] }));
-        setRecentErrors(errs?.errors || []);
+      if (!hasExistingData) {
+        setLoading(true);
       }
+
+      const promises = [];
+
+      // 1. Core balance: needed in dashboard, reports, catalog, postings, receipts
+      if (['admin_dashboard', 'admin_reports', 'admin_postings', 'admin_receipts', 'admin_catalog', 'admin_operations'].includes(currentView)) {
+        promises.push(api.getCashBalance().then(d => setCashBalance(d)).catch(() => null));
+      }
+
+      // 2. Projects & Ledgers: needed in postings, receipts, catalog, reports
+      if (['admin_postings', 'admin_receipts', 'admin_catalog', 'admin_reports'].includes(currentView)) {
+        promises.push(
+          api.getProjects().then(d => {
+            const list = d || [];
+            setProjects(list);
+            if (list.length > 0 && !receiptProjectId) setReceiptProjectId(list[0].id);
+          }).catch(() => [])
+        );
+        promises.push(
+          api.getLedgers().then(d => {
+            const list = d || [];
+            setLedgers(list);
+            if (list.length > 0 && !receiptLedgerId) setReceiptLedgerId(list[0].id);
+          }).catch(() => [])
+        );
+      }
+
+      // 3. Requests / Postings Queue: needed in dashboard & postings
+      if (['admin_dashboard', 'admin_postings'].includes(currentView)) {
+        promises.push(
+          api.listRequests().then(reqData => {
+            setPostingsQueue(
+              (reqData || []).filter(
+                (r) => r.status === 'SUPPORTING_UPLOADED' || (r.status === 'APPROVED' && r.supporting_files?.length > 0)
+              )
+            );
+          }).catch(() => [])
+        );
+      }
+
+      // 4. Company Receipts: needed in dashboard (count) & receipts
+      if (['admin_dashboard', 'admin_receipts'].includes(currentView)) {
+        promises.push(api.listCompanyReceipts().then(d => setReceipts(d || [])).catch(() => []));
+      }
+
+      // 5. Alerts: needed in dashboard & operations
+      if (['admin_dashboard', 'admin_operations'].includes(currentView)) {
+        promises.push(api.getAlerts().then(d => setAlerts(d?.alerts || [])).catch(() => ({ alerts: [] })));
+      }
+
+      // 6. Reports: needed in admin_reports (RUNS IMMEDIATELY IN PARALLEL!)
+      if (currentView === 'admin_reports') {
+        promises.push(api.getMonthlyReport(reportMonth).then(d => setMonthlyReport(d)).catch(() => null));
+      }
+
+      // 7. Users & Assignments: needed in admin_users
+      if (currentView === 'admin_users') {
+        promises.push(api.listUsers().then(d => setUsersList(d || [])).catch(() => []));
+        promises.push(api.listAssignments().then(d => setAssignments(d || [])).catch(() => []));
+      }
+
+      // 8. Catalog: Periods & Adjustments: needed in admin_catalog
+      if (currentView === 'admin_catalog') {
+        promises.push(api.listFinancialPeriods().then(d => setPeriods(d || [])).catch(() => []));
+        promises.push(api.listBalanceAdjustments().then(d => setAdjustments(d || [])).catch(() => []));
+      }
+
+      // 9. Operations: Metrics, Backups, Errors: needed in admin_operations
+      if (currentView === 'admin_operations') {
+        promises.push(api.getMetrics().then(d => setMetrics(d)).catch(() => null));
+        promises.push(api.listBackups().then(d => setBackups(d || [])).catch(() => []));
+        promises.push(api.getErrors(100).then(d => setRecentErrors(d?.errors || [])).catch(() => ({ errors: [] })));
+      }
+
+      // 10. Audit Trail: needed in admin_audit
+      if (currentView === 'admin_audit') {
+        promises.push(api.listAuditEvents({ limit: 1000 }).then(d => setAuditEvents(d || [])).catch(() => []));
+      }
+
+      await Promise.all(promises);
     } catch (e) {
       console.error(e);
       addToast({ type: 'error', message: 'Error loading admin data.' });

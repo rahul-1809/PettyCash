@@ -38,9 +38,50 @@ function generateCorrelationId() {
   return 'fe-' + Math.random().toString(36).substring(2, 12);
 }
 
+// In-memory cache for GET requests: cacheKey -> { timestamp, data }
+const apiCache = new Map();
+// In-flight deduplication: cacheKey -> Promise
+const inFlightRequests = new Map();
+// Default cache TTL: 30 seconds for fast repeat reads
+const DEFAULT_CACHE_TTL_MS = 30000;
+
+export function clearApiCache(prefix = null) {
+  if (!prefix) {
+    apiCache.clear();
+  } else {
+    for (const key of apiCache.keys()) {
+      if (key.includes(prefix)) {
+        apiCache.delete(key);
+      }
+    }
+  }
+}
+
 async function request(endpoint, options = {}) {
   const token = getAuthToken();
   const correlationId = options.correlationId || generateCorrelationId();
+  const method = (options.method || 'GET').toUpperCase();
+  const isGet = method === 'GET';
+
+  // Any state-mutating operation clears the read cache
+  if (!isGet) {
+    clearApiCache();
+  }
+
+  const cacheKey = `${token ? 'auth:' : 'anon:'}${endpoint}`;
+
+  // Check cache for GET requests
+  if (isGet && !options.noCache) {
+    const cached = apiCache.get(cacheKey);
+    const ttl = options.ttl || DEFAULT_CACHE_TTL_MS;
+    if (cached && Date.now() - cached.timestamp < ttl) {
+      return cached.data;
+    }
+    // Deduplicate in-flight requests
+    if (inFlightRequests.has(cacheKey)) {
+      return inFlightRequests.get(cacheKey);
+    }
+  }
   
   const headers = {
     'X-Correlation-ID': correlationId,
@@ -59,37 +100,56 @@ async function request(endpoint, options = {}) {
   }
 
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
-  const response = await fetch(url, {
-    ...options,
-    headers,
-    body,
-  });
 
-  if (!response.ok) {
-    let errorDetail = 'Request failed';
+  const fetchPromise = (async () => {
     try {
-      const errJson = await response.json();
-      errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
-    } catch (_) {
-      errorDetail = await response.text();
-    }
-    const error = new Error(typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail));
-    error.status = response.status;
-    error.correlationId = response.headers.get('X-Correlation-ID') || correlationId;
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        body,
+      });
 
-    if (response.status === 401 && !url.includes('/auth/login') && !url.includes('/auth/me')) {
-      window.dispatchEvent(new CustomEvent('pettycash:unauthorized', { detail: { error } }));
-    }
+      if (!response.ok) {
+        let errorDetail = 'Request failed';
+        try {
+          const errJson = await response.json();
+          errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+        } catch (_) {
+          errorDetail = await response.text();
+        }
+        const error = new Error(typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail));
+        error.status = response.status;
+        error.correlationId = response.headers.get('X-Correlation-ID') || correlationId;
 
-    throw error;
+        if (response.status === 401 && !url.includes('/auth/login') && !url.includes('/auth/me')) {
+          window.dispatchEvent(new CustomEvent('pettycash:unauthorized', { detail: { error } }));
+        }
+
+        throw error;
+      }
+
+      // Check content type for binary vs json
+      const contentType = response.headers.get('Content-Type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        if (isGet && !options.noCache) {
+          apiCache.set(cacheKey, { timestamp: Date.now(), data });
+        }
+        return data;
+      }
+      return response;
+    } finally {
+      if (isGet) {
+        inFlightRequests.delete(cacheKey);
+      }
+    }
+  })();
+
+  if (isGet && !options.noCache) {
+    inFlightRequests.set(cacheKey, fetchPromise);
   }
 
-  // Check content type for binary vs json
-  const contentType = response.headers.get('Content-Type') || '';
-  if (contentType.includes('application/json')) {
-    return await response.json();
-  }
-  return response;
+  return fetchPromise;
 }
 
 export const api = {
@@ -97,6 +157,7 @@ export const api = {
   setAuthToken,
   getCurrentUser,
   setCurrentUser,
+  clearCache: clearApiCache,
 
   // ── Auth
   login: async (email, password) => {
