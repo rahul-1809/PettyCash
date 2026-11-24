@@ -1,7 +1,9 @@
 import os
 import re
 import base64
+import secrets
 import threading
+from decimal import Decimal
 from typing import List, Dict, Any, Optional
 
 try:
@@ -17,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 try:
     from backend import database
@@ -91,6 +93,7 @@ try:
         reverse_company_receipt,
         create_balance_adjustment,
         list_adjustments,
+        validate_date_not_in_closed_period,
     )
     from backend.legacy_ledger_service import (
         import_session_to_legacy,
@@ -199,6 +202,7 @@ except ImportError:
         reverse_company_receipt,
         create_balance_adjustment,
         list_adjustments,
+        validate_date_not_in_closed_period,
     )
     from legacy_ledger_service import (
         import_session_to_legacy,
@@ -321,12 +325,20 @@ init_db()
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
-# Enable CORS for local development and deployment
+# Enable CORS for local development and deployment (F-08: strict origins in production)
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000,http://localhost:5173"
+)
+_is_prod = os.getenv("APP_ENV", "").lower() == "production"
+_parsed_origins = [orig.strip() for orig in _raw_origins.split(",") if orig.strip()]
+if _is_prod and "*" in _parsed_origins:
+    _parsed_origins = [o for o in _parsed_origins if o != "*"]
+    if not _parsed_origins:
+        _parsed_origins = ["https://pettycash.ajassociate.online"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in os.getenv(
-        "ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000"
-    ).split(",") if origin.strip()],
+    allow_origins=_parsed_origins or ["https://pettycash.ajassociate.online"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -428,10 +440,17 @@ class PettyCashRequestCreate(BaseModel):
     ledger_id: str
     category: str
     request_date: str
-    amount: float
-    purpose: str
-    notes: Optional[str] = None
+    amount: Decimal = Field(..., gt=0, lt=100_000_000)
+    purpose: str = Field(..., min_length=1, max_length=500)
+    notes: Optional[str] = Field(None, max_length=2000)
     approving_manager_id: str
+
+    @field_validator("amount", mode="after")
+    @classmethod
+    def check_amount_precision(cls, v: Decimal) -> Decimal:
+        if round(v, 2) != v:
+            raise ValueError("Amount cannot have more than 2 decimal places.")
+        return v
 
 
 class PettyCashRequestUpdate(BaseModel):
@@ -439,14 +458,21 @@ class PettyCashRequestUpdate(BaseModel):
     ledger_id: Optional[str] = None
     category: Optional[str] = None
     request_date: Optional[str] = None
-    amount: Optional[float] = None
-    purpose: Optional[str] = None
-    notes: Optional[str] = None
+    amount: Optional[Decimal] = Field(None, gt=0, lt=100_000_000)
+    purpose: Optional[str] = Field(None, min_length=1, max_length=500)
+    notes: Optional[str] = Field(None, max_length=2000)
     approving_manager_id: Optional[str] = None
+
+    @field_validator("amount", mode="after")
+    @classmethod
+    def check_amount_precision(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is not None and round(v, 2) != v:
+            raise ValueError("Amount cannot have more than 2 decimal places.")
+        return v
 
 
 class RequestDecision(BaseModel):
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(None, max_length=1000)
 
 
 class PostingRequest(BaseModel):
@@ -454,7 +480,7 @@ class PostingRequest(BaseModel):
 
 
 class MasterDataRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=200)
 
 
 class MasterDataStatusRequest(BaseModel):
@@ -462,17 +488,32 @@ class MasterDataStatusRequest(BaseModel):
 
 
 class CashAccountRequest(BaseModel):
-    opening_balance: float
+    opening_balance: Decimal = Field(..., ge=0, lt=100_000_000)
+
+    @field_validator("opening_balance", mode="after")
+    @classmethod
+    def check_precision(cls, v: Decimal) -> Decimal:
+        if round(v, 2) != v:
+            raise ValueError("Amount cannot have more than 2 decimal places.")
+        return v
 
 
 class CompanyReceiptRequest(BaseModel):
-    amount: float
+    amount: Decimal = Field(..., gt=0, lt=100_000_000)
     receipt_date: Optional[str] = None
     date: Optional[str] = None
-    description: str
+    description: str = Field(..., min_length=1, max_length=500)
     ledger_id: Optional[str] = None
     category: Optional[str] = None
     project_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+
+    @field_validator("amount", mode="after")
+    @classmethod
+    def check_amount_precision(cls, v: Decimal) -> Decimal:
+        if round(v, 2) != v:
+            raise ValueError("Amount cannot have more than 2 decimal places.")
+        return v
 
 
 class FinancialPeriodCreate(BaseModel):
@@ -481,16 +522,23 @@ class FinancialPeriodCreate(BaseModel):
 
 
 class ReversalRequest(BaseModel):
-    reason: str
+    reason: str = Field(..., min_length=1, max_length=1000)
     effective_date: Optional[str] = None
 
 
 class BalanceAdjustmentRequest(BaseModel):
-    amount: float
+    amount: Decimal = Field(..., gt=0, lt=100_000_000)
     effective_date: str
-    reason: str
+    reason: str = Field(..., min_length=1, max_length=1000)
     direction: str = "INFLOW"
     cash_account_id: Optional[str] = "system-main-cash"
+
+    @field_validator("amount", mode="after")
+    @classmethod
+    def check_amount_precision(cls, v: Decimal) -> Decimal:
+        if round(v, 2) != v:
+            raise ValueError("Amount cannot have more than 2 decimal places.")
+        return v
 
 
 class LegacySessionUpdateRequest(BaseModel):
@@ -563,8 +611,6 @@ def current_user(
     if credentials:
         raw_token = credentials.credentials
     if not raw_token:
-        raw_token = request.query_params.get("token") or request.query_params.get("auth_token")
-    if not raw_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
     user = get_authenticated_user(raw_token)
     if not user:
@@ -579,8 +625,6 @@ def optional_current_user(
     raw_token = None
     if credentials:
         raw_token = credentials.credentials
-    if not raw_token:
-        raw_token = request.query_params.get("token") or request.query_params.get("auth_token")
     if not raw_token:
         return None
     user = get_authenticated_user(raw_token)
@@ -821,7 +865,8 @@ def post_test_email(user: dict = Depends(current_user)):
         send_test_email(user["email"], user.get("username", "User"))
         return {"success": True, "recipient": user["email"]}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.error("Failed to send test email: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to send notification email. Please verify SMTP configuration.") from exc
 
 
 # ─── Admin Master Data and Cash Accounts ─────────────────────────────────────
@@ -931,44 +976,108 @@ def configure_cash_balance(
     try:
         with database.get_connection() as connection:
             timestamp = database.now_iso()
-            connection.execute(
-                f"""
-                UPDATE cash_accounts
-                SET opening_balance={marker}, updated_at={marker}
-                WHERE id='system-main-cash'
-                """,
-                (str(req.opening_balance), timestamp),
-            )
-            connection.execute(
-                f"""
-                UPDATE cash_account_balances
-                SET current_balance={marker}, version=version+1, updated_at={marker}
-                WHERE cash_account_id='system-main-cash'
-                """,
-                (str(req.opening_balance), timestamp),
-            )
-            record_audit_event(
-                connection=connection,
-                actor_user_id=admin["id"],
-                action="CASH_BALANCE_UPDATED",
-                entity_type="cash_account",
-                entity_id="system-main-cash",
-                after={"opening_balance": str(req.opening_balance)},
-            )
+            # Check if ledger activity or adjustments already exist (F-04)
+            ledger_count = connection.execute("SELECT COUNT(*) AS c FROM ledger_entries").fetchone()["c"]
+            adj_count = connection.execute("SELECT COUNT(*) AS c FROM ledger_adjustments").fetchone()["c"]
+            has_activity = (ledger_count > 0 or adj_count > 0)
+
+            cur_bal_row = connection.execute(
+                f"SELECT current_balance, version FROM cash_account_balances WHERE cash_account_id='system-main-cash'"
+            ).fetchone()
+            cur_bal = Decimal(str(cur_bal_row["current_balance"])) if cur_bal_row else Decimal("0.00")
+            target_bal = Decimal(str(req.opening_balance))
+
+            if has_activity:
+                # If transaction activity already exists, mutating balance must create an audit-reconciling ledger adjustment
+                diff = target_bal - cur_bal
+                if diff != 0:
+                    today = timestamp[:10]
+                    validate_date_not_in_closed_period(connection, today)
+                    direction = "INFLOW" if diff > 0 else "OUTFLOW"
+                    adj_amount = abs(diff)
+                    adj_id = secrets.token_urlsafe(18)
+                    connection.execute(
+                        f"""
+                        INSERT INTO ledger_adjustments
+                            (id, cash_account_id, adjustment_type, direction,
+                             amount, effective_date, reason, created_by, created_at)
+                        VALUES ({marker}, 'system-main-cash', 'ADJUSTMENT', {marker},
+                                {marker}, {marker}, {marker}, {marker}, {marker})
+                        """,
+                        (adj_id, direction, str(adj_amount), today, f"Admin balance calibration to {target_bal}", admin["id"], timestamp),
+                    )
+                    connection.execute(
+                        f"""
+                        UPDATE cash_account_balances
+                        SET current_balance={marker}, version=version+1, updated_at={marker}
+                        WHERE cash_account_id='system-main-cash'
+                        """,
+                        (str(target_bal), timestamp),
+                    )
+                    connection.execute(
+                        f"""
+                        UPDATE cash_accounts
+                        SET opening_balance={marker}, updated_at={marker}
+                        WHERE id='system-main-cash'
+                        """,
+                        (str(req.opening_balance), timestamp),
+                    )
+                    record_audit_event(
+                        connection=connection,
+                        actor_user_id=admin["id"],
+                        action="CASH_BALANCE_RECONCILED",
+                        entity_type="cash_account",
+                        entity_id="system-main-cash",
+                        before={"current_balance": str(cur_bal)},
+                        after={"current_balance": str(target_bal), "adjustment_id": adj_id, "diff": str(diff)},
+                    )
+                else:
+                    connection.execute(
+                        f"UPDATE cash_accounts SET opening_balance={marker}, updated_at={marker} WHERE id='system-main-cash'",
+                        (str(req.opening_balance), timestamp),
+                    )
+            else:
+                # Fresh vault initialization
+                connection.execute(
+                    f"""
+                    UPDATE cash_accounts
+                    SET opening_balance={marker}, updated_at={marker}
+                    WHERE id='system-main-cash'
+                    """,
+                    (str(req.opening_balance), timestamp),
+                )
+                connection.execute(
+                    f"""
+                    UPDATE cash_account_balances
+                    SET current_balance={marker}, version=version+1, updated_at={marker}
+                    WHERE cash_account_id='system-main-cash'
+                    """,
+                    (str(req.opening_balance), timestamp),
+                )
+                record_audit_event(
+                    connection=connection,
+                    actor_user_id=admin["id"],
+                    action="CASH_BALANCE_INITIALIZED",
+                    entity_type="cash_account",
+                    entity_id="system-main-cash",
+                    after={"opening_balance": str(req.opening_balance)},
+                )
             connection.commit()
         return get_cash_balance()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Outstanding balance could not be configured.") from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/company-receipts", tags=["Company Receipts"], summary="Create company receipt (Admin)")
 def create_cash_receipt(
     req: CompanyReceiptRequest,
+    request: Request,
     admin: dict = Depends(require_roles("Admin")),
 ):
     target_date = req.receipt_date or req.date
     if not target_date:
         raise HTTPException(status_code=400, detail="Receipt date is required.")
+    client_key = req.idempotency_key or request.headers.get("Idempotency-Key")
     try:
         return create_company_receipt(
             admin_id=admin["id"],
@@ -978,6 +1087,7 @@ def create_cash_receipt(
             ledger_id=req.ledger_id,
             category=req.category,
             project_id=req.project_id,
+            client_idempotency_key=client_key,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -1637,7 +1747,8 @@ def trigger_backup(admin: dict = Depends(require_roles("Admin"))):
         )
         return backup
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Database backup failed: {str(exc)}") from exc
+        logger.error("Database backup failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Database backup operation failed.") from exc
 
 
 @app.get(
@@ -1711,7 +1822,8 @@ def restore_backup(req: BackupRestoreRequest, admin: dict = Depends(require_role
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Database restore failed: {str(exc)}") from exc
+        logger.error("Database restore failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Database restore operation failed.") from exc
 
 
 @app.post(
@@ -1732,7 +1844,8 @@ def deployment_rollback(req: DeploymentRollbackRequest, admin: dict = Depends(re
         )
         return result
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Rollback failed: {str(exc)}") from exc
+        logger.error("Deployment rollback failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Deployment rollback operation failed.") from exc
 
 
 @app.get(
@@ -1775,8 +1888,21 @@ def acknowledge_alert_endpoint(req: AlertAcknowledgeRequest, admin: dict = Depen
 
 _CACHED_DEFAULT_DATA = None
 
+
+def check_session_access(session: dict, user: dict) -> None:
+    if user.get("role") in ("Admin", "Manager"):
+        return
+    data = session.get("data") or {}
+    owner = data.get("created_by") or session.get("created_by")
+    if owner and owner != user.get("id"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You do not have permission to access this spreadsheet session.",
+        )
+
+
 @app.get("/api/default-data", tags=["Spreadsheet Sessions"], summary="Load default spreadsheet data")
-def get_default_data():
+def get_default_data(user: dict = Depends(current_user)):
     global _CACHED_DEFAULT_DATA
     if _CACHED_DEFAULT_DATA is not None:
         return _CACHED_DEFAULT_DATA
@@ -1787,13 +1913,17 @@ def get_default_data():
         _CACHED_DEFAULT_DATA = data
         return data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse default file: {str(e)}")
+        logger.error("Failed to parse default file: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to parse default spreadsheet template.")
 
 
 # ─── Upload ───────────────────────────────────────────────────────────────────
 
 @app.post("/api/upload", tags=["Spreadsheet Sessions"], summary="Upload Excel spreadsheet")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_excel(
+    file: UploadFile = File(...),
+    user: dict = Depends(current_user),
+):
     if not file.filename.endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported.")
     try:
@@ -1804,14 +1934,20 @@ async def upload_excel(file: UploadFile = File(...)):
         data["source_excel_base64"] = base64.b64encode(content).decode("ascii")
         data["source_excel_filename"] = file.filename
         return data
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process uploaded file: {str(e)}")
+        logger.error("Failed to process uploaded file: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to process uploaded Excel file.")
 
 
 # ─── Recalculate ─────────────────────────────────────────────────────────────
 
 @app.post("/api/recalculate", tags=["Spreadsheet Sessions"], summary="Recalculate summary metrics")
-def recalculate(req: RecalculateRequest):
+def recalculate(
+    req: RecalculateRequest,
+    user: dict = Depends(current_user),
+):
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
         summary_result = recalculate_summary(
@@ -1821,20 +1957,23 @@ def recalculate(req: RecalculateRequest):
             transactions=tx_dicts
         )
         return summary_result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Recalculation error: {str(e)}")
+        logger.error("Recalculation error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Spreadsheet recalculation error.")
 
 
 # ─── Session CRUD ─────────────────────────────────────────────────────────────
 
 @app.get("/api/sessions", tags=["Spreadsheet Sessions"], summary="List spreadsheet sessions")
-def api_list_sessions():
-    """Return all sessions (metadata only, no transaction blobs)."""
-    return list_sessions()
+def api_list_sessions(user: dict = Depends(current_user)):
+    """Return all sessions (metadata only, filtered by role)."""
+    return list_sessions(user_id=user["id"], role=user["role"])
 
 
 @app.get("/api/project-categories", tags=["Spreadsheet Sessions"], summary="List session categories")
-def api_list_project_categories():
+def api_list_project_categories(user: dict = Depends(current_user)):
     return list_project_categories()
 
 
@@ -1843,7 +1982,10 @@ class ProjectCategoryRequest(BaseModel):
 
 
 @app.post("/api/project-categories", tags=["Spreadsheet Sessions"], summary="Add session category")
-def api_add_project_category(req: ProjectCategoryRequest):
+def api_add_project_category(
+    req: ProjectCategoryRequest,
+    user: dict = Depends(current_user),
+):
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Project name cannot be empty.")
@@ -1851,7 +1993,10 @@ def api_add_project_category(req: ProjectCategoryRequest):
 
 
 @app.post("/api/sessions", tags=["Spreadsheet Sessions"], summary="Save spreadsheet session")
-def api_create_session(req: SaveSessionRequest):
+def api_create_session(
+    req: SaveSessionRequest,
+    user: dict = Depends(current_user),
+):
     """Create a new saved session from current state."""
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
@@ -1873,6 +2018,7 @@ def api_create_session(req: SaveSessionRequest):
             summary=summary,
             source_excel_base64=req.source_excel_base64,
             source_excel_filename=req.source_excel_filename,
+            created_by=user["id"],
         )
         # Return flattened structure (without nested data blob for list view)
         return {
@@ -1885,16 +2031,24 @@ def api_create_session(req: SaveSessionRequest):
             "end_date": session["end_date"],
             "tx_count": session["tx_count"],
         }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
+        logger.error("Failed to create session: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create spreadsheet session.")
 
 
 @app.get("/api/sessions/{session_id}", tags=["Spreadsheet Sessions"], summary="Get spreadsheet session")
-def api_get_session(session_id: str, include_raw: bool = False):
+def api_get_session(
+    session_id: str,
+    include_raw: bool = False,
+    user: dict = Depends(current_user),
+):
     """Load a session's full data (transactions + summary). Excludes heavy source excel base64 unless requested."""
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
+    check_session_access(session, user)
     data = dict(session.get("data") or {})
     if not include_raw:
         data.pop("source_excel_base64", None)
@@ -1912,12 +2066,16 @@ def api_get_session(session_id: str, include_raw: bool = False):
 
 
 @app.get("/api/sessions/{session_id}/zip", tags=["Spreadsheet Sessions"], summary="Export spreadsheet session as ZIP bundle")
-def api_export_session_zip(session_id: str):
+def api_export_session_zip(
+    session_id: str,
+    user: dict = Depends(current_user),
+):
     """Export spreadsheet session as a complete ZIP bundle containing the styled workbook,
     offline HTML evidence viewer, and all attached voucher documents."""
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
+    check_session_access(session, user)
     data = session.get("data") or {}
     tx_dicts = data.get("transactions") or []
     summary = data.get("summary")
@@ -1938,15 +2096,21 @@ def api_export_session_zip(session_id: str):
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate session ZIP bundle: {str(e)}")
+        logger.error("Failed to generate session ZIP bundle: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate session ZIP bundle.")
 
 
 @app.put("/api/sessions/{session_id}", tags=["Spreadsheet Sessions"], summary="Update spreadsheet session")
-def api_update_session(session_id: str, req: SaveSessionRequest):
+def api_update_session(
+    session_id: str,
+    req: SaveSessionRequest,
+    user: dict = Depends(current_user),
+):
     """Save/overwrite an existing session with new state."""
     existing = get_session(session_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Session not found.")
+    check_session_access(existing, user)
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
         add_project_categories([tx.get("project", "") for tx in tx_dicts])
@@ -1977,23 +2141,38 @@ def api_update_session(session_id: str, req: SaveSessionRequest):
             "end_date": session["end_date"],
             "tx_count": session["tx_count"],
         }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update session: {str(e)}")
+        logger.error("Failed to update session: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update spreadsheet session.")
 
 
 @app.patch("/api/sessions/{session_id}/rename", tags=["Spreadsheet Sessions"], summary="Rename spreadsheet session")
-def api_rename_session(session_id: str, req: RenameSessionRequest):
+def api_rename_session(
+    session_id: str,
+    req: RenameSessionRequest,
+    user: dict = Depends(current_user),
+):
     """Rename a session without changing its data."""
     existing = get_session(session_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Session not found.")
+    check_session_access(existing, user)
     session = rename_session(session_id, req.name)
     return {"id": session["id"], "name": session["name"], "updated_at": session["updated_at"]}
 
 
 @app.delete("/api/sessions/{session_id}", tags=["Spreadsheet Sessions"], summary="Delete spreadsheet session")
-def api_delete_session(session_id: str):
+def api_delete_session(
+    session_id: str,
+    user: dict = Depends(current_user),
+):
     """Permanently delete a session."""
+    existing = get_session(session_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    check_session_access(existing, user)
     if not delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found.")
     return {"deleted": True}
@@ -2002,7 +2181,10 @@ def api_delete_session(session_id: str):
 # ─── Drilldown Export ─────────────────────────────────────────────────────────
 
 @app.post("/api/export-drilldown", tags=["Spreadsheet Sessions"], summary="Export drilldown Excel")
-def export_drilldown(req: DrilldownExportRequest):
+def export_drilldown(
+    req: DrilldownExportRequest,
+    user: dict = Depends(current_user),
+):
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
         excel_buf = generate_drilldown_excel(req.project, req.type, tx_dicts)
@@ -2012,14 +2194,20 @@ def export_drilldown(req: DrilldownExportRequest):
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Export drilldown error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Export drilldown error.")
 
 
 # ─── Full Export ──────────────────────────────────────────────────────────────
 
 @app.post("/api/export", tags=["Spreadsheet Sessions"], summary="Export styled Excel")
-def export_excel(req: RecalculateRequest):
+def export_excel(
+    req: RecalculateRequest,
+    user: dict = Depends(current_user),
+):
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
         excel_buffer = generate_styled_excel(
@@ -2034,12 +2222,18 @@ def export_excel(req: RecalculateRequest):
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
+        logger.error("Export error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Spreadsheet export error.")
 
 
 @app.post("/api/export-zip", tags=["Spreadsheet Sessions"], summary="Export spreadsheet state as ZIP bundle")
-def export_state_zip(req: SaveSessionRequest):
+def export_state_zip(
+    req: SaveSessionRequest,
+    user: dict = Depends(current_user),
+):
     """Export current on-screen spreadsheet state as a complete ZIP bundle."""
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
@@ -2057,8 +2251,11 @@ def export_state_zip(req: SaveSessionRequest):
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export ZIP error: {str(e)}")
+        logger.error("Export ZIP error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Export ZIP error.")
 
 
 # ─── Serve Frontend ───────────────────────────────────────────────────────────

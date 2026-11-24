@@ -309,17 +309,16 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
                         </span>
                         <div className="flex flex-wrap gap-2">
                           {r.supporting_files.map((file) => (
-                            <a
+                            <button
                               key={file.id}
-                              href={api.getSupportingFileDownloadUrl(file.id)}
-                              target="_blank"
-                              rel="noreferrer"
+                              type="button"
+                              onClick={() => api.downloadFile(api.getSupportingFileDownloadUrl(file.id), file.original_filename)}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-950 border border-slate-800 hover:border-slate-700 text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
                             >
                               <FileText className="w-3.5 h-3.5" />
                               <span className="truncate max-w-[200px]">{file.original_filename}</span>
                               <ExternalLink className="w-3 h-3 text-slate-500" />
-                            </a>
+                            </button>
                           ))}
                         </div>
                       </div>

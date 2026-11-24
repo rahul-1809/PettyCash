@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import random
 import secrets
+import time
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -21,11 +23,16 @@ except ImportError:
 
 def _amount(value) -> str:
     try:
-        amount = Decimal(str(value)).quantize(Decimal("0.01"))
+        raw_dec = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
         raise ValueError("Receipt amount must be a valid number.") from exc
-    if amount <= 0:
+    if raw_dec <= 0:
         raise ValueError("Receipt amount must be greater than zero.")
+    if raw_dec >= Decimal("100000000.00"):
+        raise ValueError("Receipt amount exceeds maximum allowed limit (100,000,000).")
+    if round(raw_dec, 2) != raw_dec:
+        raise ValueError("Receipt amount cannot have more than 2 decimal places.")
+    amount = raw_dec.quantize(Decimal("0.01"))
     return format(amount, "f")
 
 
@@ -69,6 +76,7 @@ def create_company_receipt(
     ledger_id: Optional[str] = None,
     category: Optional[str] = None,
     project_id: Optional[str] = None,
+    client_idempotency_key: Optional[str] = None,
 ) -> dict:
     normalized_amount = _amount(amount)
     normalized_date = _date(receipt_date)
@@ -79,6 +87,8 @@ def create_company_receipt(
 
     if not description:
         raise ValueError("Receipt description is required.")
+    if len(description) > 500:
+        raise ValueError("Description cannot exceed 500 characters.")
 
     marker = database._placeholder()
     timestamp = database.now_iso()
@@ -116,15 +126,18 @@ def create_company_receipt(
         elif not _active_record(connection, "ledgers", ledger_id):
             raise ValueError("Selected ledger is invalid or inactive.")
 
-        fingerprint_payload = "|".join((
-            normalized_amount,
-            normalized_date,
-            description,
-            ledger_id,
-            category,
-            project_id,
-        ))
-        idempotency_key = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
+        if client_idempotency_key and client_idempotency_key.strip():
+            idempotency_key = f"client:{client_idempotency_key.strip()}"
+        else:
+            fingerprint_payload = "|".join((
+                normalized_amount,
+                normalized_date,
+                description,
+                ledger_id,
+                category,
+                project_id,
+            ))
+            idempotency_key = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
 
         existing = connection.execute(
             f"SELECT * FROM company_receipts WHERE idempotency_key={marker}",

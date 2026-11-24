@@ -990,14 +990,13 @@ export default function EmployeeViews({ currentView, onNavigate, addToast, user 
                         <FileText className="w-4 h-4 text-emerald-400" />
                         <span className="text-slate-200">{f.original_filename}</span>
                       </div>
-                      <a
-                        href={api.getSupportingFileDownloadUrl(f.id)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-1 text-emerald-400 hover:underline"
+                      <button
+                        type="button"
+                        onClick={() => api.downloadFile(api.getSupportingFileDownloadUrl(f.id), f.original_filename)}
+                        className="flex items-center gap-1 text-emerald-400 hover:underline text-xs"
                       >
                         Download <ExternalLink className="w-3 h-3" />
-                      </a>
+                      </button>
                     </div>
                   ))}
                 </div>

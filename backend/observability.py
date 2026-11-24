@@ -242,8 +242,11 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             # Record metrics
             global_metrics_collector.record_request(method, path, response.status_code, duration_ms)
 
-            # Inject correlation ID into response header
+            # Inject correlation ID and security headers (F-11)
             response.headers["X-Correlation-ID"] = correlation_id
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
             # Log request outcome
             log_data = {
@@ -307,9 +310,15 @@ _RATE_LIMIT_STORE = defaultdict(list)
 _RATE_LIMIT_WINDOW = 60.0  # seconds
 _RATE_LIMIT_MAX_REQUESTS = 300  # generous 300 req/min per client
 
+_LOGIN_ATTEMPTS = defaultdict(list)
+_LOGIN_LOCKOUTS = {}
+_LOGIN_WINDOW = 300.0  # 5 minutes
+_LOGIN_MAX_FAILED_ATTEMPTS = 5
+_LOGIN_LOCKOUT_DURATION = 900.0  # 15 minutes
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """In-memory sliding-window rate limiting to prevent server / database saturation."""
+    """In-memory sliding-window rate limiting to prevent server / database saturation and brute-force attacks."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
@@ -328,6 +337,35 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             client_key = f"auth:{auth_header[-16:]}"
 
         now = time.monotonic()
+
+        # Dedicated login brute-force and lockout protection (F-12)
+        if path == "/api/auth/login" and request.method == "POST":
+            login_key = f"login:{client_key}"
+            if login_key in _LOGIN_LOCKOUTS:
+                lockout_until = _LOGIN_LOCKOUTS[login_key]
+                if now < lockout_until:
+                    retry_after = max(1, int(lockout_until - now))
+                    logger.warning(f"Login attempt rejected due to active lockout for {login_key}")
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": f"Account temporarily locked due to multiple failed login attempts. Retry in {retry_after} seconds."},
+                        headers={"Retry-After": str(retry_after)},
+                    )
+                else:
+                    _LOGIN_LOCKOUTS.pop(login_key, None)
+
+            response = await call_next(request)
+            if response.status_code in (400, 401):
+                attempts = [t for t in _LOGIN_ATTEMPTS[login_key] if now - t < _LOGIN_WINDOW]
+                attempts.append(now)
+                _LOGIN_ATTEMPTS[login_key] = attempts
+                if len(attempts) >= _LOGIN_MAX_FAILED_ATTEMPTS:
+                    _LOGIN_LOCKOUTS[login_key] = now + _LOGIN_LOCKOUT_DURATION
+                    logger.warning(f"Client {login_key} locked out after {len(attempts)} failed attempts.")
+            elif response.status_code == 200:
+                _LOGIN_ATTEMPTS.pop(login_key, None)
+            return response
+
         history = _RATE_LIMIT_STORE[client_key]
         _RATE_LIMIT_STORE[client_key] = [t for t in history if now - t < _RATE_LIMIT_WINDOW]
         history = _RATE_LIMIT_STORE[client_key]

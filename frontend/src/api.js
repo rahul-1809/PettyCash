@@ -264,10 +264,7 @@ export const api = {
   },
   listSupportingFiles: (requestId) =>
     request(`/requests/${requestId}/supporting-files`),
-  getSupportingFileDownloadUrl: (fileId) => {
-    const token = api.getAuthToken();
-    return `${API_BASE}/supporting-files/${fileId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-  },
+  getSupportingFileDownloadUrl: (fileId) => `${API_BASE}/supporting-files/${fileId}`,
 
   // ── Periods
   listFinancialPeriods: () => request('/financial-periods'),
@@ -280,18 +277,14 @@ export const api = {
   getMonthlyReport: (month) =>
     request(`/reports/monthly${month ? `?month=${month}` : ''}`),
   getMonthlyExcelUrl: (month) => {
-    const token = api.getAuthToken();
     const params = new URLSearchParams();
     if (month) params.append('month', month);
-    if (token) params.append('token', token);
     const qs = params.toString();
     return `${API_BASE}/reports/monthly/excel${qs ? `?${qs}` : ''}`;
   },
   getMonthlyZipUrl: (month) => {
-    const token = api.getAuthToken();
     const params = new URLSearchParams();
     if (month) params.append('month', month);
-    if (token) params.append('token', token);
     const qs = params.toString();
     return `${API_BASE}/reports/monthly/zip${qs ? `?${qs}` : ''}`;
   },

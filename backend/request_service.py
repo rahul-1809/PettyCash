@@ -25,11 +25,16 @@ VALID_TRANSITIONS = {
 
 def _amount(value) -> str:
     try:
-        amount = Decimal(str(value)).quantize(Decimal("0.01"))
+        raw_dec = Decimal(str(value))
     except (InvalidOperation, ValueError):
         raise ValueError("Amount must be a valid number.")
-    if amount <= 0:
+    if raw_dec <= 0:
         raise ValueError("Amount must be greater than zero.")
+    if raw_dec >= Decimal("100000000.00"):
+        raise ValueError("Amount exceeds maximum allowed limit (100,000,000).")
+    if round(raw_dec, 2) != raw_dec:
+        raise ValueError("Amount cannot have more than 2 decimal places.")
+    amount = raw_dec.quantize(Decimal("0.01"))
     return format(amount, "f")
 
 
@@ -91,6 +96,10 @@ def create_draft(
         raise ValueError("A requester cannot approve their own request.")
     if not purpose.strip():
         raise ValueError("Purpose is required.")
+    if len(purpose) > 500:
+        raise ValueError("Purpose cannot exceed 500 characters.")
+    if notes and len(notes) > 2000:
+        raise ValueError("Notes cannot exceed 2000 characters.")
     if not category.strip():
         raise ValueError("Category is required.")
     normalized_amount = _amount(amount)
@@ -180,6 +189,10 @@ def update_draft(request_id: str, requester_id: str, values: dict) -> dict:
             raise ValueError("A requester cannot approve their own request.")
         if not merged["purpose"].strip():
             raise ValueError("Purpose is required.")
+        if len(merged["purpose"]) > 500:
+            raise ValueError("Purpose cannot exceed 500 characters.")
+        if merged.get("notes") and len(merged["notes"]) > 2000:
+            raise ValueError("Notes cannot exceed 2000 characters.")
         category = merged.get("category", merged["category_name"])
         if not category.strip():
             raise ValueError("Category is required.")

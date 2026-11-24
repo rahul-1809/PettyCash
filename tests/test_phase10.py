@@ -219,7 +219,11 @@ class Phase10Tests(unittest.TestCase):
         self.assertIn("cannot approve their own request", res_self_draft.json()["detail"].lower())
 
     def test_05_compatibility_spreadsheet_workflows(self):
-        """Acceptance Criteria: Existing import and compatibility workflows remain available and functional."""
+        """Acceptance Criteria: Existing import and compatibility workflows remain available and functional with auth."""
+        # Unauthenticated calls are rejected with 401 (F-01)
+        res_unauth = self.client.get("/api/sessions")
+        self.assertEqual(res_unauth.status_code, 401)
+
         # Test recalculation endpoint
         sample_txs = [
             {"date": "2026-11-01", "ledger": "Petty Cash", "memo": "Office Tea", "receipt": 0, "payment": 150, "balance": 4850, "project": "General"},
@@ -227,6 +231,7 @@ class Phase10Tests(unittest.TestCase):
         ]
         res_recalc = self.client.post(
             "/api/recalculate",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
             json={
                 "opening_balance": 5000.0,
                 "start_date": "2026-11-01",
@@ -242,6 +247,7 @@ class Phase10Tests(unittest.TestCase):
         # Test session save and retrieve
         res_save_session = self.client.post(
             "/api/sessions",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
             json={
                 "name": "Phase 10 Migration Session",
                 "opening_balance": 5000.0,
@@ -253,7 +259,10 @@ class Phase10Tests(unittest.TestCase):
         self.assertEqual(res_save_session.status_code, 200)
         session_id = res_save_session.json()["id"]
 
-        res_get_session = self.client.get(f"/api/sessions/{session_id}")
+        res_get_session = self.client.get(
+            f"/api/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+        )
         self.assertEqual(res_get_session.status_code, 200)
         self.assertEqual(res_get_session.json()["name"], "Phase 10 Migration Session")
 
@@ -357,6 +366,7 @@ class Phase10Tests(unittest.TestCase):
         ]
         create_res = self.client.post(
             "/api/sessions",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
             json={
                 "name": "Audit Ready Oct 2026",
                 "opening_balance": 5000.0,
@@ -371,17 +381,26 @@ class Phase10Tests(unittest.TestCase):
         session_id = create_res.json()["id"]
 
         # 2. Test lightweight get session (excludes huge source_excel_base64)
-        get_res = self.client.get(f"/api/sessions/{session_id}")
+        get_res = self.client.get(
+            f"/api/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+        )
         self.assertEqual(get_res.status_code, 200)
         self.assertNotIn("source_excel_base64", get_res.json())
 
         # Include raw includes it
-        get_raw_res = self.client.get(f"/api/sessions/{session_id}?include_raw=true")
+        get_raw_res = self.client.get(
+            f"/api/sessions/{session_id}?include_raw=true",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+        )
         self.assertEqual(get_raw_res.status_code, 200)
         self.assertEqual(get_raw_res.json().get("source_excel_base64"), "U0FNUExFX0VYQ0VMX0RBVEE=")
 
         # 3. Test GET /api/sessions/{session_id}/zip
-        zip_res = self.client.get(f"/api/sessions/{session_id}/zip")
+        zip_res = self.client.get(
+            f"/api/sessions/{session_id}/zip",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+        )
         self.assertEqual(zip_res.status_code, 200)
         self.assertEqual(zip_res.headers.get("content-type"), "application/zip")
         self.assertIn("Audit_Ready_Oct_2026_Bundle.zip", zip_res.headers.get("content-disposition", ""))
@@ -401,6 +420,7 @@ class Phase10Tests(unittest.TestCase):
         # 4. Test POST /api/export-zip for on-the-fly export
         export_zip_res = self.client.post(
             "/api/export-zip",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
             json={
                 "name": "Live State Bundle",
                 "opening_balance": 1000.0,

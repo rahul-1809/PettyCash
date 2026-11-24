@@ -13,7 +13,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: ALLOWED_ORIGINS
-        value: "*"
+        value: "https://pettycash.ajassociate.online,http://localhost:5173,http://localhost:8000"
       - key: LOG_LEVEL
         value: INFO
       - key: APP_BASE_URL

@@ -1540,17 +1540,16 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                       <span className="text-xs font-semibold text-slate-400 block">Supporting Voucher:</span>
                       <div className="flex flex-wrap gap-2">
                         {reqItem.supporting_files.map((file) => (
-                          <a
+                          <button
                             key={file.id}
-                            href={api.getSupportingFileDownloadUrl(file.id)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-950 border border-slate-800 text-xs text-emerald-400 hover:text-emerald-300"
+                            type="button"
+                            onClick={() => api.downloadFile(api.getSupportingFileDownloadUrl(file.id), file.original_filename)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-950 border border-slate-800 text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
                           >
                             <FileText className="w-3.5 h-3.5" />
                             <span>{file.original_filename}</span>
                             <ExternalLink className="w-3 h-3 text-slate-500" />
-                          </a>
+                          </button>
                         ))}
                       </div>
                     </div>

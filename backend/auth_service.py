@@ -21,7 +21,8 @@ ONBOARDING_TTL = timedelta(hours=24)
 
 # In-memory session cache: token_hash -> (user_info, expires_at_dt, cached_at_monotonic)
 _AUTH_CACHE = {}
-_AUTH_CACHE_TTL = 60.0  # seconds
+_AUTH_CACHE_TTL = 10.0  # seconds (short TTL to ensure fast revocation propagation)
+MAX_SESSION_ABSOLUTE_LIFETIME = timedelta(days=30)  # Hard cap on session lifetime
 
 
 def clear_auth_cache(token_hash: Optional[str] = None) -> None:
@@ -138,7 +139,7 @@ def get_authenticated_user(raw_token: str) -> Optional[dict]:
     with database.get_connection() as connection:
         row = connection.execute(
             f"""
-            SELECT u.id, u.username, u.email, u.is_active, r.name AS role, s.expires_at
+            SELECT u.id, u.username, u.email, u.is_active, r.name AS role, s.expires_at, s.created_at
             FROM user_sessions s
             JOIN users u ON u.id = s.user_id
             JOIN roles r ON r.id = u.role_id
@@ -152,21 +153,33 @@ def get_authenticated_user(raw_token: str) -> Optional[dict]:
     if not row:
         return None
 
-    exp_dt = parse_timestamp(row["expires_at"])
+    row_dict = dict(row)
+    created_dt = parse_timestamp(row_dict["created_at"]) if row_dict.get("created_at") else None
+    if created_dt and (now_utc - created_dt) > MAX_SESSION_ABSOLUTE_LIFETIME:
+        # Session exceeded maximum absolute lifetime
+        return None
+
+    exp_dt = parse_timestamp(row_dict["expires_at"])
     if exp_dt <= now_utc:
         return None
 
-    # Rolling extension: If session has less than 15 days remaining, automatically extend it
+    # Rolling extension: If session has less than 15 days remaining, extend it up to hard lifetime ceiling
     if (exp_dt - now_utc) < timedelta(days=15):
         try:
-            new_exp = expiry(SESSION_TTL)
-            with database.get_connection() as conn:
-                conn.execute(
-                    f"UPDATE user_sessions SET expires_at={marker} WHERE token_hash={marker} AND revoked_at IS NULL",
-                    (new_exp, th),
-                )
-                conn.commit()
-            exp_dt = parse_timestamp(new_exp)
+            target_dt = now_utc + SESSION_TTL
+            if created_dt:
+                max_allowed = created_dt + MAX_SESSION_ABSOLUTE_LIFETIME
+                if target_dt > max_allowed:
+                    target_dt = max_allowed
+            if target_dt > exp_dt:
+                new_exp = target_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                with database.get_connection() as conn:
+                    conn.execute(
+                        f"UPDATE user_sessions SET expires_at={marker} WHERE token_hash={marker} AND revoked_at IS NULL",
+                        (new_exp, th),
+                    )
+                    conn.commit()
+                exp_dt = target_dt
         except Exception:
             pass
 
@@ -203,6 +216,19 @@ def create_onboarding_token(user_id: str) -> str:
     return raw_token
 
 
+def revoke_user_sessions(user_id: str) -> None:
+    """Revoke all active sessions for a user and clear the in-memory cache."""
+    timestamp = database.now_iso()
+    marker = database._placeholder()
+    with database.get_connection() as connection:
+        connection.execute(
+            f"UPDATE user_sessions SET revoked_at={marker} WHERE user_id={marker} AND revoked_at IS NULL",
+            (timestamp, user_id),
+        )
+        connection.commit()
+    clear_auth_cache()
+
+
 def set_password_with_token(raw_token: str, password: str) -> dict:
     password_hash = hash_password(password)
     marker = database._placeholder()
@@ -231,6 +257,20 @@ def set_password_with_token(raw_token: str, password: str) -> dict:
             f"UPDATE onboarding_tokens SET used_at={marker} WHERE token_hash={marker}",
             (timestamp, hash_token(raw_token)),
         )
+        # Invalidate all active sessions for this user on password reset (F-03)
+        connection.execute(
+            f"UPDATE user_sessions SET revoked_at={marker} WHERE user_id={marker} AND revoked_at IS NULL",
+            (timestamp, row["user_id"]),
+        )
+        record_audit_event(
+            connection=connection,
+            actor_user_id=row["user_id"],
+            action="AUTH_PASSWORD_RESET_SESSIONS_REVOKED",
+            entity_type="user",
+            entity_id=row["user_id"],
+            after={"user_id": row["user_id"]},
+        )
         connection.commit()
+    clear_auth_cache()
     return {"user_id": row["user_id"]}
 

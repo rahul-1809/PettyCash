@@ -531,9 +531,16 @@ def restore_database_backup(backup_id_or_path: str, target_db_path: Optional[str
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 2. Perform transactional restoration using SQLite backup API
-    with sqlite3.connect(str(target_backup)) as source_conn:
-        with sqlite3.connect(str(target_path)) as target_conn:
-            source_conn.backup(target_conn)
+    source_conn = sqlite3.connect(str(target_backup))
+    try:
+        target_conn = sqlite3.connect(str(target_path))
+        try:
+            with target_conn:
+                source_conn.backup(target_conn)
+        finally:
+            target_conn.close()
+    finally:
+        source_conn.close()
 
     return {
         "status": "RESTORED",

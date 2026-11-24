@@ -11,6 +11,7 @@ import os
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -80,17 +81,30 @@ def close_pool():
 atexit.register(close_pool)
 
 
+@contextmanager
 def get_connection():
     if DATABASE_URL:
         pool = get_pool()
         if pool is not None:
-            return pool.connection()
-        return psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+            with pool.connection() as conn:
+                yield conn
+            return
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+        return
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _placeholder() -> str:
@@ -300,21 +314,37 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def list_sessions() -> List[dict]:
+def list_sessions(user_id: Optional[str] = None, role: Optional[str] = None) -> List[dict]:
     global _SESSION_LIST_CACHE, _SESSION_LIST_CACHE_TS
     is_testing = os.getenv("TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
     now = time.time()
-    if not is_testing and _SESSION_LIST_CACHE is not None and (now - _SESSION_LIST_CACHE_TS < 45.0):
+    if not is_testing and _SESSION_LIST_CACHE is not None and (now - _SESSION_LIST_CACHE_TS < 45.0) and role in ("Admin", "Manager"):
         return _SESSION_LIST_CACHE
 
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT id, name, created_at, updated_at, opening_balance, "
-            "start_date, end_date, tx_count FROM sessions "
+            "start_date, end_date, tx_count, data FROM sessions "
             "ORDER BY updated_at DESC"
         ).fetchall()
-        result = [dict(row) for row in rows]
-        if not is_testing:
+        result = []
+        for row in rows:
+            row_dict = dict(row)
+            data_raw = row_dict.pop("data", None)
+            created_by = None
+            if data_raw:
+                try:
+                    data_obj = json.loads(data_raw) if isinstance(data_raw, str) else data_raw
+                    created_by = data_obj.get("created_by")
+                except Exception:
+                    pass
+            row_dict["created_by"] = created_by
+            if role == "Employee" and user_id:
+                if created_by is not None and created_by != user_id:
+                    continue
+            result.append(row_dict)
+
+        if not is_testing and role in ("Admin", "Manager"):
             _SESSION_LIST_CACHE = result
             _SESSION_LIST_CACHE_TS = now
         return result
@@ -329,6 +359,7 @@ def create_session(
     summary: dict,
     source_excel_base64: Optional[str] = None,
     source_excel_filename: Optional[str] = None,
+    created_by: Optional[str] = None,
 ) -> dict:
     invalidate_session_caches()
     session_id = str(uuid.uuid4())
@@ -339,6 +370,7 @@ def create_session(
         "summary": summary,
         "source_excel_base64": source_excel_base64,
         "source_excel_filename": source_excel_filename,
+        "created_by": created_by,
     }
     marker = _placeholder()
 
@@ -404,12 +436,14 @@ def update_session(
 ) -> Optional[dict]:
     invalidate_session_caches(session_id)
     existing = get_session(session_id)
+    created_by = None
     if existing and existing.get("data"):
         old_data = existing["data"]
         if source_excel_base64 is None:
             source_excel_base64 = old_data.get("source_excel_base64")
         if source_excel_filename is None:
             source_excel_filename = old_data.get("source_excel_filename")
+        created_by = old_data.get("created_by")
 
     ts = now_iso()
     tx_count = len(transactions)
@@ -418,6 +452,7 @@ def update_session(
         "summary": summary,
         "source_excel_base64": source_excel_base64,
         "source_excel_filename": source_excel_filename,
+        "created_by": created_by,
     }
     marker = _placeholder()
     values = [

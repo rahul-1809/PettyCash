@@ -37,10 +37,16 @@ def _validate_date(value: str) -> str:
 
 def _validate_amount(value: Any) -> Decimal:
     try:
-        amount = Decimal(str(value)).quantize(Decimal("0.01"))
+        raw_dec = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
         raise ValueError("Amount must be a valid number.") from exc
-    return amount
+    if raw_dec <= 0:
+        raise ValueError("Amount must be positive.")
+    if raw_dec >= Decimal("100000000.00"):
+        raise ValueError("Amount exceeds maximum allowed limit (100,000,000).")
+    if round(raw_dec, 2) != raw_dec:
+        raise ValueError("Amount cannot have more than 2 decimal places.")
+    return raw_dec.quantize(Decimal("0.01"))
 
 
 def is_date_in_closed_period(connection, date_str: str) -> bool:
