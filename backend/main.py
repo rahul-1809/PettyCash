@@ -54,10 +54,12 @@ try:
     from backend.user_service import (
         create_assignment,
         create_bootstrap_admin,
+        deactivate_user,
         delete_user,
         list_assignments,
         list_users,
         provision_user,
+        reactivate_user,
         review_assignment,
     )
     from backend.request_service import (
@@ -163,10 +165,12 @@ except ImportError:
     from user_service import (
         create_assignment,
         create_bootstrap_admin,
+        deactivate_user,
         delete_user,
         list_assignments,
         list_users,
         provision_user,
+        reactivate_user,
         review_assignment,
     )
     from request_service import (
@@ -759,8 +763,8 @@ def create_user(
 
 
 @app.get("/api/users", tags=["Users & Assignments"], summary="List users (Admin)")
-def get_users(_: dict = Depends(require_roles("Admin"))):
-    return list_users()
+def get_users(include_inactive: bool = True, _: dict = Depends(require_roles("Admin"))):
+    return list_users(include_inactive=include_inactive)
 
 
 @app.post("/api/users/{user_id}/token", tags=["Users & Assignments"], summary="Generate setup token for user (Admin)")
@@ -774,7 +778,33 @@ def generate_user_token_endpoint(user_id: str, admin: dict = Depends(require_rol
         raise HTTPException(status_code=400, detail=f"Failed to generate token: {exc}") from exc
 
 
-@app.delete("/api/users/{user_id}", tags=["Users & Assignments"], summary="Delete user (Admin)")
+@app.post("/api/users/{user_id}/deactivate", tags=["Users & Assignments"], summary="Deactivate user (Admin)")
+def deactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
+    try:
+        return deactivate_user(user_id, admin["id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Failed to deactivate user: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to deactivate user.") from exc
+
+
+@app.post("/api/users/{user_id}/reactivate", tags=["Users & Assignments"], summary="Reactivate user (Admin)")
+def reactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
+    try:
+        return reactivate_user(user_id, admin["id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Failed to reactivate user: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to reactivate user.") from exc
+
+
+@app.delete("/api/users/{user_id}", tags=["Users & Assignments"], summary="Delete or deactivate user (Admin)")
 def delete_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
     try:
         return delete_user(user_id, admin["id"])

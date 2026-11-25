@@ -88,15 +88,58 @@ def provision_user(username: str, email: str, role: str, actor_user_id: str) -> 
     normalized_email = email.strip().lower()
 
     with database.get_connection() as connection:
-        # Pre-check for duplicate username or email to return clean user-facing error
-        existing = connection.execute(
-            f"SELECT username, email FROM users WHERE LOWER(username)=LOWER({marker}) OR LOWER(email)=LOWER({marker})",
+        # Pre-check for duplicate active username or email
+        active_conflict = connection.execute(
+            f"SELECT username, email FROM users WHERE is_active = 1 AND (LOWER(username)=LOWER({marker}) OR LOWER(email)=LOWER({marker}))",
             (normalized_username, normalized_email),
         ).fetchone()
-        if existing:
-            if existing["username"].lower() == normalized_username.lower():
+        if active_conflict:
+            act_dict = dict(active_conflict)
+            if act_dict["username"].lower() == normalized_username.lower():
                 raise ValueError(f"User with username '{normalized_username}' already exists.")
             raise ValueError(f"User with email '{normalized_email}' already exists.")
+
+        # Check if there is an inactive user to reactivate
+        inactive_user = connection.execute(
+            f"SELECT id, username, email FROM users WHERE is_active = 0 AND (LOWER(username)=LOWER({marker}) OR LOWER(email)=LOWER({marker}))",
+            (normalized_username, normalized_email),
+        ).fetchone()
+        if inactive_user:
+            inact_dict = dict(inactive_user)
+            target_user_id = inact_dict["id"]
+            timestamp = database.now_iso()
+            connection.execute(
+                f"""
+                UPDATE users
+                SET role_id = {marker}, username = {marker}, email = {marker}, is_active = 1, updated_at = {marker}
+                WHERE id = {marker}
+                """,
+                (ROLE_IDS[role], normalized_username, normalized_email, timestamp, target_user_id),
+            )
+            record_audit_event(
+                connection=connection,
+                actor_user_id=actor_user_id,
+                action="USER_REACTIVATED",
+                entity_type="user",
+                entity_id=target_user_id,
+                after={"username": normalized_username, "email": normalized_email, "role": role},
+                correlation_id=target_user_id,
+            )
+            connection.commit()
+
+            token = create_onboarding_token(target_user_id)
+            create_notification(
+                actor_user_id,
+                "USER_REACTIVATED",
+                "User account reactivated",
+                f"{role} account {normalized_email} was reactivated.",
+                "user",
+                target_user_id,
+            )
+            return (
+                {"id": target_user_id, "username": normalized_username, "email": normalized_email, "role": role, "reactivated": True},
+                token,
+            )
 
         user_id = secrets.token_urlsafe(18)
         timestamp = database.now_iso()
@@ -256,6 +299,103 @@ def delete_user(user_id: str, admin_user_id: str) -> dict:
         connection.commit()
 
     return {"id": user_id, "username": user_row["username"], "status": mode}
+
+
+def deactivate_user(user_id: str, admin_user_id: str) -> dict:
+    """Explicitly deactivates a user account, revoking active sessions and clearing assignments."""
+    if user_id == admin_user_id:
+        raise ValueError("Administrators cannot deactivate their own active account.")
+
+    marker = database._placeholder()
+    with database.get_connection() as connection:
+        user_row = connection.execute(
+            f"SELECT id, username, email, is_active FROM users WHERE id = {marker}",
+            (user_id,),
+        ).fetchone()
+        if not user_row:
+            raise LookupError("User not found.")
+        user_dict = dict(user_row)
+        if user_dict.get("is_active") == 0:
+            return {"id": user_id, "username": user_dict["username"], "status": "ALREADY_DEACTIVATED"}
+
+        # Clear assignments involving this user
+        connection.execute(
+            f"""
+            DELETE FROM manager_employee_assignments
+            WHERE manager_id = {marker} OR employee_id = {marker} OR requested_by = {marker} OR reviewed_by = {marker}
+            """,
+            (user_id, user_id, user_id, user_id),
+        )
+
+        # Invalidate active sessions & tokens
+        connection.execute(
+            f"DELETE FROM user_sessions WHERE user_id = {marker}",
+            (user_id,),
+        )
+        connection.execute(
+            f"DELETE FROM onboarding_tokens WHERE user_id = {marker}",
+            (user_id,),
+        )
+
+        # Deactivate
+        connection.execute(
+            f"UPDATE users SET is_active = 0, updated_at = {marker} WHERE id = {marker}",
+            (database.now_iso(), user_id),
+        )
+
+        record_audit_event(
+            connection=connection,
+            actor_user_id=admin_user_id,
+            action="USER_DEACTIVATED",
+            entity_type="user",
+            entity_id=user_id,
+            before={
+                "username": user_dict["username"],
+                "email": user_dict["email"],
+                "is_active": user_dict.get("is_active", 1),
+            },
+            after={"status": "DEACTIVATED", "deactivated_by": admin_user_id},
+        )
+        connection.commit()
+
+    return {"id": user_id, "username": user_dict["username"], "status": "DEACTIVATED"}
+
+
+def reactivate_user(user_id: str, admin_user_id: str) -> dict:
+    """Explicitly reactivates a previously deactivated user account."""
+    marker = database._placeholder()
+    with database.get_connection() as connection:
+        user_row = connection.execute(
+            f"SELECT id, username, email, is_active FROM users WHERE id = {marker}",
+            (user_id,),
+        ).fetchone()
+        if not user_row:
+            raise LookupError("User not found.")
+        user_dict = dict(user_row)
+        if user_dict.get("is_active") == 1:
+            return {"id": user_id, "username": user_dict["username"], "status": "ALREADY_ACTIVE"}
+
+        connection.execute(
+            f"UPDATE users SET is_active = 1, updated_at = {marker} WHERE id = {marker}",
+            (database.now_iso(), user_id),
+        )
+
+        record_audit_event(
+            connection=connection,
+            actor_user_id=admin_user_id,
+            action="USER_REACTIVATED",
+            entity_type="user",
+            entity_id=user_id,
+            before={
+                "username": user_dict["username"],
+                "email": user_dict["email"],
+                "is_active": 0,
+            },
+            after={"status": "ACTIVE", "reactivated_by": admin_user_id},
+        )
+        connection.commit()
+
+    return {"id": user_id, "username": user_dict["username"], "status": "ACTIVE"}
 
 
 def create_assignment(manager_id: str, employee_id: str, requested_by: str) -> dict:

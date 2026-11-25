@@ -340,3 +340,43 @@ class AuditRemediationTests(unittest.TestCase):
         # Balance must be exactly 1000 - 800 = 200.00
         bal_res = self.client.get("/api/cash-balance", headers={"Authorization": f"Bearer {self.admin_token}"})
         self.assertEqual(float(bal_res.json()["current_balance"]), 200.00)
+
+    def test_user_deactivation_and_reactivation_flow(self):
+        """Verify user deactivation, reactivation, and re-provisioning of inactive users."""
+        # 1. Provision a test employee
+        prov_res = self.client.post(
+            "/api/users",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+            json={"username": "temp_deact_user", "email": "temp_deact@example.com", "role": "Employee"},
+        )
+        self.assertEqual(prov_res.status_code, 200)
+        target_uid = prov_res.json()["id"]
+
+        # 2. Deactivate the user
+        deact_res = self.client.post(
+            f"/api/users/{target_uid}/deactivate",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+        )
+        self.assertEqual(deact_res.status_code, 200)
+        self.assertEqual(deact_res.json()["status"], "DEACTIVATED")
+
+        # 3. List users includes inactive user with is_active = 0
+        list_res = self.client.get("/api/users", headers={"Authorization": f"Bearer {self.admin_token}"})
+        self.assertEqual(list_res.status_code, 200)
+        u_record = next(u for u in list_res.json() if u["id"] == target_uid)
+        self.assertEqual(u_record["is_active"], 0)
+
+        # 4. Re-provisioning the same email automatically reactivates the account
+        reprov_res = self.client.post(
+            "/api/users",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+            json={"username": "temp_deact_user", "email": "temp_deact@example.com", "role": "Manager"},
+        )
+        self.assertEqual(reprov_res.status_code, 200)
+        self.assertTrue(reprov_res.json().get("reactivated"))
+        self.assertEqual(reprov_res.json()["role"], "Manager")
+
+        # Verify active in DB
+        list_res2 = self.client.get("/api/users", headers={"Authorization": f"Bearer {self.admin_token}"})
+        u_record2 = next(u for u in list_res2.json() if u["id"] == target_uid)
+        self.assertEqual(u_record2["is_active"], 1)

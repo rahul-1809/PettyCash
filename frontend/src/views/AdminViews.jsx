@@ -26,6 +26,8 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Trash2,
+  UserX,
+  UserCheck,
   ToggleLeft,
   ToggleRight,
   Filter,
@@ -88,6 +90,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
 
   const [errorsPage, setErrorsPage] = useState(1);
   const [errorsPageSize, setErrorsPageSize] = useState(10);
+  const [userFilterStatus, setUserFilterStatus] = useState('ALL'); // 'ALL' | 'ACTIVE' | 'DEACTIVATED'
 
   // Modals state
   const [provisionModalOpen, setProvisionModalOpen] = useState(false);
@@ -270,7 +273,14 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
     try {
       setIsSubmitting(true);
       const res = await api.provisionUser(newUsername.trim(), newUserEmail.trim(), newUserRole);
-      addToast({ type: 'success', title: 'User Provisioned', message: `User ${res.username} added.` });
+      const isReactivated = res.reactivated;
+      addToast({
+        type: 'success',
+        title: isReactivated ? 'User Reactivated' : 'User Provisioned',
+        message: isReactivated
+          ? `User ${res.username} was reactivated with role ${res.role}.`
+          : `User ${res.username} added.`,
+      });
       if (res.onboarding_token) {
         setOnboardingTokenResult(res.onboarding_token);
       } else {
@@ -286,8 +296,48 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
     }
   };
 
+  const handleDeactivateUser = async (userToDeactivate) => {
+    if (!window.confirm(`Are you sure you want to deactivate user "${userToDeactivate.username}" (${userToDeactivate.email})?\n\nThey will no longer be able to log in, but their historical financial records will remain safely preserved.`)) {
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await api.deactivateUser(userToDeactivate.id);
+      addToast({
+        type: 'success',
+        title: 'User Deactivated',
+        message: `User ${userToDeactivate.username} has been deactivated.`,
+      });
+      loadData();
+    } catch (err) {
+      addToast({ type: 'error', message: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleReactivateUser = async (userToReactivate) => {
+    if (!window.confirm(`Are you sure you want to reactivate user "${userToReactivate.username}" (${userToReactivate.email})?`)) {
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await api.reactivateUser(userToReactivate.id);
+      addToast({
+        type: 'success',
+        title: 'User Reactivated',
+        message: `User ${userToReactivate.username} is now active.`,
+      });
+      loadData();
+    } catch (err) {
+      addToast({ type: 'error', message: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleDeleteUser = async (userToDelete) => {
-    if (!window.confirm(`Are you sure you want to delete user "${userToDelete.username}" (${userToDelete.email})?`)) {
+    if (!window.confirm(`Are you sure you want to deactivate/delete user "${userToDelete.username}" (${userToDelete.email})?`)) {
       return;
     }
     try {
@@ -295,8 +345,8 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       await api.deleteUser(userToDelete.id);
       addToast({
         type: 'success',
-        title: 'User Deleted',
-        message: `User ${userToDelete.username} has been removed.`,
+        title: 'User Updated',
+        message: `User ${userToDelete.username} account updated.`,
       });
       loadData();
     } catch (err) {
@@ -1057,8 +1107,43 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
 
           {/* Users Table */}
           <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
-            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 text-xs font-semibold text-slate-300">
-              Active Organization Users
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs font-semibold text-slate-300">
+              <span>Organization Users</span>
+              <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-0.5 rounded text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setUserFilterStatus('ALL')}
+                  className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                    userFilterStatus === 'ALL'
+                      ? 'bg-slate-700 text-white font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  All ({usersList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserFilterStatus('ACTIVE')}
+                  className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                    userFilterStatus === 'ACTIVE'
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Active ({usersList.filter((u) => u.is_active !== 0).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserFilterStatus('DEACTIVATED')}
+                  className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                    userFilterStatus === 'DEACTIVATED'
+                      ? 'bg-amber-950 text-amber-300 border border-amber-800 font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Deactivated ({usersList.filter((u) => u.is_active === 0).length})
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-200">
@@ -1073,14 +1158,26 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {usersList.length === 0 ? (
+                {usersList
+                  .filter((u) => {
+                    if (userFilterStatus === 'ACTIVE') return u.is_active !== 0;
+                    if (userFilterStatus === 'DEACTIVATED') return u.is_active === 0;
+                    return true;
+                  })
+                  .length === 0 ? (
                   <tr>
                     <td colSpan={6} className="p-6 text-center text-slate-500">
-                      No active users found.
+                      No users found.
                     </td>
                   </tr>
                 ) : (
-                  usersList.map((u) => (
+                  usersList
+                    .filter((u) => {
+                      if (userFilterStatus === 'ACTIVE') return u.is_active !== 0;
+                      if (userFilterStatus === 'DEACTIVATED') return u.is_active === 0;
+                      return true;
+                    })
+                    .map((u) => (
                     <tr key={u.id} className="hover:bg-slate-800/40">
                       <td className="p-3 font-semibold text-slate-100">{u.username}</td>
                       <td className="p-3 text-slate-400">{u.email}</td>
@@ -1097,9 +1194,15 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                       </td>
                       <td className="p-3 text-slate-400">{u.created_at?.split('T')[0]}</td>
                       <td className="p-3">
-                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active
-                        </span>
+                        {u.is_active !== 0 ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-medium">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-500" /> Deactivated
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-right">
                         {u.id !== user?.id ? (
@@ -1125,14 +1228,25 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                             >
                               <Key className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              type="button"
-                              title={`Delete ${u.username}`}
-                              onClick={() => handleDeleteUser(u)}
-                              className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {u.is_active !== 0 ? (
+                              <button
+                                type="button"
+                                title={`Deactivate ${u.username}`}
+                                onClick={() => handleDeactivateUser(u)}
+                                className="p-1.5 rounded text-slate-400 hover:text-amber-400 hover:bg-amber-950/40 cursor-pointer transition-colors"
+                              >
+                                <UserX className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                title={`Reactivate ${u.username}`}
+                                onClick={() => handleReactivateUser(u)}
+                                className="p-1.5 rounded text-slate-400 hover:text-emerald-400 hover:bg-emerald-950/40 cursor-pointer transition-colors"
+                              >
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <span className="text-[10px] text-slate-600 font-mono">Current User</span>
@@ -2889,7 +3003,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             >
               <option value="">-- Choose Manager --</option>
               {usersList
-                .filter((u) => u.role === 'Manager')
+                .filter((u) => u.is_active !== 0 && u.role === 'Manager')
                 .map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.username} ({m.email})
@@ -2907,7 +3021,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             >
               <option value="">-- Choose Employee --</option>
               {usersList
-                .filter((u) => u.role === 'Employee')
+                .filter((u) => u.is_active !== 0 && u.role === 'Employee')
                 .map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.username} ({e.email})

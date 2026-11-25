@@ -186,10 +186,12 @@ export const api = {
     request('/auth/set-password', { method: 'POST', body: { token, password } }),
 
   // ── Users & Assignments
-  listUsers: () => request('/users'),
+  listUsers: (includeInactive = true) => request(`/users?include_inactive=${includeInactive}`),
   provisionUser: (username, email, role) =>
     request('/users', { method: 'POST', body: { username, email, role } }),
   generateUserToken: (userId) => request(`/users/${userId}/token`, { method: 'POST' }),
+  deactivateUser: (userId) => request(`/users/${userId}/deactivate`, { method: 'POST' }),
+  reactivateUser: (userId) => request(`/users/${userId}/reactivate`, { method: 'POST' }),
   deleteUser: (userId) => request(`/users/${userId}`, { method: 'DELETE' }),
   listAssignments: () => request('/assignments'),
   createAssignment: (manager_id, employee_id) =>
