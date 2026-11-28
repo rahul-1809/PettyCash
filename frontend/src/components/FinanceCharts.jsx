@@ -20,13 +20,14 @@ function formatINR(val) {
 }
 
 export default function FinanceCharts({ monthlyReport }) {
-  const categoryData = useMemo(() => {
-    const raw = monthlyReport?.category_breakdown || [];
-    const total = raw.reduce((acc, c) => acc + Number(c.total || c.amount || 0), 0);
-    return raw.map((c, idx) => {
-      const value = Number(c.total || c.amount || 0);
+  // 1. Project Expenditure (Pie / Donut Chart)
+  const projectData = useMemo(() => {
+    const raw = monthlyReport?.spending_by_project || monthlyReport?.project_breakdown || [];
+    const total = raw.reduce((acc, p) => acc + Number(p.amount || p.total || 0), 0);
+    return raw.map((p, idx) => {
+      const value = Number(p.amount || p.total || 0);
       return {
-        label: c.name || c.category || 'General',
+        label: p.name || p.project || 'General',
         value,
         pct: total > 0 ? (value / total) * 100 : 0,
         color: PALETTE[idx % PALETTE.length],
@@ -34,20 +35,22 @@ export default function FinanceCharts({ monthlyReport }) {
     });
   }, [monthlyReport]);
 
-  const projectData = useMemo(() => {
-    const raw = monthlyReport?.project_breakdown || [];
-    const maxVal = Math.max(...raw.map((p) => Number(p.total || p.amount || 0)), 1);
-    return raw.slice(0, 8).map((p, idx) => {
-      const value = Number(p.total || p.amount || 0);
+  // 2. Ledger Expenditure (Horizontal Bar Chart)
+  const ledgerData = useMemo(() => {
+    const raw = monthlyReport?.spending_by_ledger || monthlyReport?.ledger_breakdown || [];
+    const maxVal = Math.max(...raw.map((l) => Number(l.amount || l.total || 0)), 1);
+    return raw.slice(0, 8).map((l, idx) => {
+      const value = Number(l.amount || l.total || 0);
       return {
-        label: p.name || p.project || 'General',
+        label: l.name || l.ledger || 'General',
         value,
         widthPct: Math.max(4, (value / maxVal) * 100),
-        color: PALETTE[idx % PALETTE.length],
+        color: PALETTE[(idx + 1) % PALETTE.length],
       };
     });
   }, [monthlyReport]);
 
+  // 3. Daily Cash Flow (Receipts vs Payments Bar Chart)
   const dailyMovement = useMemo(() => {
     const raw = monthlyReport?.daily_movement || [];
     const maxVal = Math.max(
@@ -63,8 +66,9 @@ export default function FinanceCharts({ monthlyReport }) {
     }));
   }, [monthlyReport]);
 
+  // 4. Spend by Team Member (Horizontal Bar Chart)
   const spenderData = useMemo(() => {
-    const txns = monthlyReport?.transactions || monthlyReport?.posted_entries || [];
+    const txns = monthlyReport?.posted_entries || monthlyReport?.transactions || [];
     const map = {};
     txns.forEach((t) => {
       const pay = Number(t.payment || 0);
@@ -85,12 +89,11 @@ export default function FinanceCharts({ monthlyReport }) {
     }));
   }, [monthlyReport]);
 
-  // SVG Donut math
   const donutSegments = useMemo(() => {
     const radius = 42;
     const circumference = 2 * Math.PI * radius;
     let offset = 0;
-    return categoryData.map((seg) => {
+    return projectData.map((seg) => {
       const dash = (seg.pct / 100) * circumference;
       const item = {
         ...seg,
@@ -100,25 +103,25 @@ export default function FinanceCharts({ monthlyReport }) {
       offset += dash;
       return item;
     });
-  }, [categoryData]);
+  }, [projectData]);
 
-  const totalSpent = categoryData.reduce((a, b) => a + b.value, 0);
+  const totalSpent = projectData.reduce((a, b) => a + b.value, 0);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {/* 1. Category Spend Donut Chart */}
+      {/* 1. Project Expenditure Distribution (Pie / Donut Chart) */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-sm">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <PieIcon className="w-4 h-4 text-emerald-400" /> Spend by Category
+            <PieIcon className="w-4 h-4 text-emerald-400" /> Project Expenditure Share
           </h3>
           <span className="text-[11px] font-mono text-slate-400">
             Total: {formatINR(totalSpent)}
           </span>
         </div>
-        {categoryData.length === 0 ? (
+        {projectData.length === 0 ? (
           <div className="h-44 flex items-center justify-center text-xs text-slate-500">
-            No category expenditure data for this period.
+            No project expenditure data for this period.
           </div>
         ) : (
           <div className="flex flex-col sm:flex-row items-center gap-6">
@@ -152,18 +155,18 @@ export default function FinanceCharts({ monthlyReport }) {
               </div>
             </div>
             <div className="flex-1 w-full space-y-2 max-h-40 overflow-y-auto pr-1">
-              {categoryData.map((c, idx) => (
+              {projectData.map((p, idx) => (
                 <div key={idx} className="flex items-center justify-between text-xs gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="w-2.5 h-2.5 rounded-sm shrink-0"
-                      style={{ backgroundColor: c.color }}
+                      style={{ backgroundColor: p.color }}
                     />
-                    <span className="text-slate-300 truncate">{c.label}</span>
+                    <span className="text-slate-300 truncate">{p.label}</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0 font-mono">
-                    <span className="text-slate-400 text-[10px]">{c.pct.toFixed(1)}%</span>
-                    <span className="text-slate-100 font-semibold">{formatINR(c.value)}</span>
+                    <span className="text-slate-400 text-[10px]">{p.pct.toFixed(1)}%</span>
+                    <span className="text-slate-100 font-semibold">{formatINR(p.value)}</span>
                   </div>
                 </div>
               ))}
@@ -172,30 +175,30 @@ export default function FinanceCharts({ monthlyReport }) {
         )}
       </div>
 
-      {/* 2. Project Spend Bar Chart */}
+      {/* 2. Ledger Expenditure Breakdown (Bar Chart) */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-sm">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-purple-400" /> Project Expenditure Breakdown
+            <BarChart3 className="w-4 h-4 text-purple-400" /> Ledger Expenditure Breakdown
           </h3>
-          <span className="text-[11px] text-slate-400">Top Projects</span>
+          <span className="text-[11px] text-slate-400">By Account Head</span>
         </div>
-        {projectData.length === 0 ? (
+        {ledgerData.length === 0 ? (
           <div className="h-44 flex items-center justify-center text-xs text-slate-500">
-            No project expenditure data for this period.
+            No ledger expenditure data for this period.
           </div>
         ) : (
           <div className="space-y-3">
-            {projectData.map((p, idx) => (
+            {ledgerData.map((l, idx) => (
               <div key={idx} className="space-y-1">
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-300 truncate max-w-[60%]">{p.label}</span>
-                  <span className="font-mono text-slate-100 font-semibold">{formatINR(p.value)}</span>
+                  <span className="text-slate-300 truncate max-w-[60%]">{l.label}</span>
+                  <span className="font-mono text-slate-100 font-semibold">{formatINR(l.value)}</span>
                 </div>
                 <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800/80">
                   <div
                     className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${p.widthPct}%`, backgroundColor: p.color }}
+                    style={{ width: `${l.widthPct}%`, backgroundColor: l.color }}
                   />
                 </div>
               </div>

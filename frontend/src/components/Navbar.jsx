@@ -82,10 +82,17 @@ export default function Navbar({
   const unreadCount = propUnreadCount !== undefined ? propUnreadCount : localUnreadCount;
 
   const roleBadge = () => {
-    if (user?.role === 'Admin') {
+    if (user?.role === 'Director' || user?.role === 'Admin') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/80">
-          <Shield className="w-3 h-3" /> Admin
+          <Shield className="w-3 h-3" /> Director
+        </span>
+      );
+    }
+    if (user?.role === 'Finance') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800/80">
+          <Shield className="w-3 h-3" /> Finance
         </span>
       );
     }

@@ -128,7 +128,7 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
     }
     try {
       setSubmittingReq(true);
-      const draft = await api.createRequest({
+      const draft = await api.createDraft({
         project_id: reqProject,
         ledger_id: reqLedger,
         category: reqCategory.trim(),
@@ -724,11 +724,11 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
 
       {/* ── View: Manager New Request */}
       {currentView === 'manager_new_request' && (
-        <div className="max-w-2xl space-y-6">
+        <div className="max-w-2xl mx-auto bg-slate-900 border border-slate-800 rounded-lg p-6 shadow-sm space-y-6">
           <div className="border-b border-slate-800 pb-3">
             <h1 className="text-lg font-bold text-slate-100">Raise Petty Cash Request</h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              Submit an expenditure request to your assigned Finance user for posting.
+              Submit an expenditure request to your assigned Finance user for ledger posting.
             </p>
           </div>
 
@@ -740,8 +740,8 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
               </div>
             </div>
           ) : (
-            <form onSubmit={handleSubmitManagerRequest} className="bg-slate-900 border border-slate-800 rounded-lg p-6 space-y-4 text-xs shadow-sm">
-              <div className="p-3 bg-slate-950 border border-slate-800 rounded flex items-center justify-between">
+            <form onSubmit={handleSubmitManagerRequest} className="space-y-4">
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-md flex items-center justify-between text-xs">
                 <span className="text-slate-400">Assigned Finance Reviewer:</span>
                 <span className="font-semibold text-emerald-400">
                   {assignedFinance.finance_username} ({assignedFinance.finance_email})
@@ -749,40 +749,93 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">Request Date *</label>
-                  <input type="date" value={reqDate} onChange={(e) => setReqDate(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Amount (₹) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={reqAmount}
+                    onChange={(e) => setReqAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    required
+                  />
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">Amount (₹) *</label>
-                  <input type="number" step="0.01" min="0.01" value={reqAmount} onChange={(e) => setReqAmount(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Request Date *</label>
+                  <input
+                    type="date"
+                    value={reqDate}
+                    onChange={(e) => setReqDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    required
+                  />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Purpose / Memo *</label>
+                <input
+                  type="text"
+                  maxLength={500}
+                  value={reqPurpose}
+                  onChange={(e) => setReqPurpose(e.target.value)}
+                  placeholder="e.g. Supplies for office usage"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">Project *</label>
-                  <select value={reqProject} onChange={(e) => setReqProject(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Project *</label>
+                  <select
+                    value={reqProject}
+                    onChange={(e) => setReqProject(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    required
+                  >
                     {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">Ledger *</label>
-                  <select value={reqLedger} onChange={(e) => setReqLedger(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Ledger *</label>
+                  <select
+                    value={reqLedger}
+                    onChange={(e) => setReqLedger(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    required
+                  >
                     {ledgers.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Category *</label>
+                  <input
+                    type="text"
+                    value={reqCategory}
+                    onChange={(e) => setReqCategory(e.target.value)}
+                    placeholder="e.g. Supplies"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    required
+                  />
+                </div>
               </div>
               <div>
-                <label className="block text-slate-300 font-medium mb-1">Category *</label>
-                <input type="text" value={reqCategory} onChange={(e) => setReqCategory(e.target.value)} placeholder="e.g. Travel, Client Lunch, Supplies" className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
+                <label className="block text-xs font-medium text-slate-300 mb-1">Notes (Optional)</label>
+                <textarea
+                  rows={2}
+                  maxLength={2000}
+                  value={reqNotes}
+                  onChange={(e) => setReqNotes(e.target.value)}
+                  placeholder="Additional context or justification..."
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
               </div>
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">Purpose *</label>
-                <input type="text" maxLength={500} value={reqPurpose} onChange={(e) => setReqPurpose(e.target.value)} placeholder="Brief purpose of expense" className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
-              </div>
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">Notes (Optional)</label>
-                <textarea rows={2} maxLength={2000} value={reqNotes} onChange={(e) => setReqNotes(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" />
-              </div>
-              <div className="flex justify-end pt-2">
-                <button type="submit" disabled={submittingReq} className="inline-flex items-center gap-1.5 px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold cursor-pointer disabled:opacity-50">
+              <div className="flex justify-end pt-3 border-t border-slate-800">
+                <button
+                  type="submit"
+                  disabled={submittingReq}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
                   <Send className="w-3.5 h-3.5" /> {submittingReq ? 'Submitting...' : 'Submit to Finance'}
                 </button>
               </div>

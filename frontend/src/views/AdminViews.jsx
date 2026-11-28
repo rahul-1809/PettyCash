@@ -2630,43 +2630,9 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
           {reportActiveTab === 'analytics' && monthlyReport && (
             <div className="space-y-6">
               <FinanceCharts monthlyReport={monthlyReport} />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Spending by Project */}
-                <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">Top Spending Projects (Withdrawals)</h3>
-                    <span className="text-xs font-mono font-bold text-amber-400">
-                      {formatReportCurrency(monthlyReport.total_payments)}
-                    </span>
-                  </div>
-                  <div className="space-y-3">
-                    {monthlyReport.withdrawals?.map((item, i) => {
-                      const pct = Math.round((item.amount / (monthlyReport.total_payments || 1)) * 100);
-                      return (
-                        <div key={i} className="space-y-1">
-                          <div className="flex justify-between text-xs">
-                            <button
-                              type="button"
-                              onClick={() => openReportDrilldown(item.project, 'payment', item.amount)}
-                              className="font-medium text-slate-300 hover:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
-                            >
-                              {item.particular} <ExternalLink className="w-3 h-3 opacity-60" />
-                            </button>
-                            <span className="font-mono text-slate-400">
-                              {formatReportCurrency(item.amount)} ({pct}%)
-                            </span>
-                          </div>
-                          <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-                            <div className="bg-amber-500 h-2 rounded-full transition-all duration-300" style={{ width: `${Math.min(pct, 100)}%` }}></div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
 
-                {/* Receipts by Project / Head */}
-                <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-sm space-y-4">
+              {/* Inbound Cash Receipts Breakdown */}
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-sm space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                     <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">Inbound Cash Receipts (Additions)</h3>
                     <span className="text-xs font-mono font-bold text-emerald-400">
@@ -2697,7 +2663,6 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                       );
                     })}
                   </div>
-                </div>
               </div>
 
               {/* Daily Cash Movement Aggregate */}
