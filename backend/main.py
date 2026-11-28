@@ -606,7 +606,7 @@ class DeploymentRollbackRequest(BaseModel):
 class AlertTestRequest(BaseModel):
     scenario: str = Field(
         ...,
-        description="Scenario to simulate: queue_backlog, failed_postings, auth_failures, anomalous_balance, backup_failures",
+        description="Scenario to simulate: queue_backlog, failed_postings, auth_failures, backup_failures",
     )
 
 
@@ -1988,7 +1988,7 @@ def get_alerts(admin: dict = Depends(require_roles("Director"))):
     "/api/operations/alerts/test",
     tags=["Operations & Observability"],
     summary="Simulate alert rule for testing (Admin)",
-    description="Simulates an alerting condition (queue_backlog, failed_postings, auth_failures, anomalous_balance, backup_failures) for verification.",
+    description="Simulates an alerting condition (queue_backlog, failed_postings, auth_failures, backup_failures) for verification.",
 )
 def test_alert(req: AlertTestRequest, admin: dict = Depends(require_roles("Director"))):
     try:

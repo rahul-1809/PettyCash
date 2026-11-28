@@ -694,71 +694,7 @@ def evaluate_alert_rules() -> Dict[str, Any]:
             "evaluated_at": evaluated_at,
         })
 
-    # 4. Anomalous balance check
-    cash_account = business.get("cash_account") or {}
-    current_balance = cash_account.get("current_balance", 0.0)
-    minimum_balance = cash_account.get("minimum_balance", 0.0)
-
-    # Check if admin acknowledged anomalous_balance
-    last_balance_ack = None
-    try:
-        with database.get_connection() as conn:
-            ack_b_row = conn.execute(
-                """
-                SELECT MAX(created_at) as last_ack FROM audit_events 
-                WHERE action = 'ALERT_ACKNOWLEDGED' AND entity_id = 'anomalous_balance'
-                """
-            ).fetchone()
-            last_balance_ack = ack_b_row["last_ack"] if ack_b_row and ack_b_row["last_ack"] else None
-    except Exception:
-        pass
-
-    is_balance_ack = False
-    if last_balance_ack:
-        try:
-            ack_b_dt = datetime.datetime.fromisoformat(last_balance_ack.replace("Z", "+00:00"))
-            if ack_b_dt.tzinfo is None:
-                ack_b_dt = ack_b_dt.replace(tzinfo=datetime.timezone.utc)
-            if (now - ack_b_dt).total_seconds() < 86400:
-                is_balance_ack = True
-        except Exception:
-            pass
-
-    if is_balance_ack:
-        alerts.append({
-            "rule_id": "anomalous_balance",
-            "name": "Anomalous Cash Balance Alert",
-            "severity": "INFO",
-            "status": "RESOLVED",
-            "message": f"Cash balance condition ({current_balance}) acknowledged and resolved by administrator.",
-            "trigger_value": current_balance,
-            "threshold": minimum_balance,
-            "evaluated_at": evaluated_at,
-        })
-    elif current_balance < minimum_balance:
-        alerts.append({
-            "rule_id": "anomalous_balance",
-            "name": "Anomalous Cash Balance Alert",
-            "severity": "CRITICAL" if current_balance < 0 else "WARNING",
-            "status": "FIRING",
-            "message": f"Current cash balance ({current_balance}) has fallen below minimum reserve ({minimum_balance}).",
-            "trigger_value": current_balance,
-            "threshold": minimum_balance,
-            "evaluated_at": evaluated_at,
-        })
-    else:
-        alerts.append({
-            "rule_id": "anomalous_balance",
-            "name": "Anomalous Cash Balance Alert",
-            "severity": "INFO",
-            "status": "RESOLVED",
-            "message": f"Cash balance is healthy: {current_balance} (min: {minimum_balance}).",
-            "trigger_value": current_balance,
-            "threshold": minimum_balance,
-            "evaluated_at": evaluated_at,
-        })
-
-    # 5. Backup freshness check
+    # 4. Backup freshness check
     last_backup_ack = None
     try:
         with database.get_connection() as conn:
@@ -860,7 +796,6 @@ def simulate_alert_scenario(scenario: str) -> Dict[str, Any]:
         "queue_backlog",
         "failed_postings",
         "auth_failures",
-        "anomalous_balance",
         "backup_failures",
     }
     if scenario not in valid_scenarios:
@@ -910,21 +845,6 @@ def simulate_alert_scenario(scenario: str) -> Dict[str, Any]:
                 "message": "SIMULATED: 12 authorization/authentication failures recorded.",
                 "trigger_value": 12,
                 "threshold": 5,
-                "evaluated_at": simulated_at,
-            },
-        }
-    elif scenario == "anomalous_balance":
-        result = {
-            "scenario": scenario,
-            "simulated": True,
-            "alert": {
-                "rule_id": "anomalous_balance",
-                "name": "Anomalous Cash Balance Alert",
-                "severity": "CRITICAL",
-                "status": "FIRING",
-                "message": "SIMULATED: Current cash balance (-500.00) has fallen below minimum reserve (1000.00).",
-                "trigger_value": -500.0,
-                "threshold": 1000.0,
                 "evaluated_at": simulated_at,
             },
         }

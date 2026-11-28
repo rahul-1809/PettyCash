@@ -386,13 +386,12 @@ class Phase9Tests(unittest.TestCase):
 
         self.assertIn("timestamp", data)
         self.assertIn("active_alerts_count", data)
-        self.assertEqual(data["total_rules_evaluated"], 5)
+        self.assertEqual(data["total_rules_evaluated"], 4)
 
         rule_ids = [a["rule_id"] for a in data["alerts"]]
         self.assertIn("queue_backlog", rule_ids)
         self.assertIn("failed_postings", rule_ids)
         self.assertIn("auth_failures", rule_ids)
-        self.assertIn("anomalous_balance", rule_ids)
         self.assertIn("backup_failures", rule_ids)
 
         for alert in data["alerts"]:
@@ -408,7 +407,6 @@ class Phase9Tests(unittest.TestCase):
             "queue_backlog",
             "failed_postings",
             "auth_failures",
-            "anomalous_balance",
             "backup_failures",
         ]
 
