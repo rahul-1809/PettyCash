@@ -937,14 +937,14 @@ export default function ManagerViews({ currentView, onNavigate, addToast, user }
               />
               <button
                 type="button"
-                onClick={() => api.downloadFile(api.exportMonthlyExcelUrl(reportMonth), `Petty_Cash_Report_${reportMonth}.xlsx`).catch((e) => addToast({ type: 'error', message: e.message }))}
+                onClick={() => api.downloadFile(api.getMonthlyExcelUrl(reportMonth), `Petty_Cash_Report_${reportMonth}.xlsx`).catch((e) => addToast({ type: 'error', message: e.message }))}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold border border-slate-700 cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
               </button>
               <button
                 type="button"
-                onClick={() => api.downloadFile(api.exportMonthlyZipUrl(reportMonth), `Petty_Cash_Bundle_${reportMonth}.zip`).catch((e) => addToast({ type: 'error', message: e.message }))}
+                onClick={() => api.downloadFile(api.getMonthlyZipUrl(reportMonth), `Petty_Cash_Bundle_${reportMonth}.zip`).catch((e) => addToast({ type: 'error', message: e.message }))}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" /> ZIP Bundle
