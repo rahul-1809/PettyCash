@@ -72,7 +72,7 @@ const readAttachment = (file) => new Promise((resolve, reject) => {
 export default function SpreadsheetTool() {
   // ── Core state
   const [loading, setLoading] = useState(true);
-  const [openingBalance, setOpeningBalance] = useState(-105100.87);
+  const [openingBalance, setOpeningBalance] = useState(0);
   const [startDate, setStartDate] = useState('01-10-2026');
   const [endDate, setEndDate] = useState('06.11.2026');
   const [transactions, setTransactions] = useState([]);

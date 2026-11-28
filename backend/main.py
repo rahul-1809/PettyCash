@@ -528,7 +528,7 @@ class MasterDataStatusRequest(BaseModel):
 
 
 class CashAccountRequest(BaseModel):
-    opening_balance: Decimal = Field(..., ge=0, lt=100_000_000)
+    opening_balance: Decimal = Field(..., gt=-100_000_000, lt=100_000_000)
 
     @field_validator("opening_balance", mode="after")
     @classmethod
@@ -1075,8 +1075,6 @@ def configure_cash_balance(
     req: CashAccountRequest,
     admin: dict = Depends(require_roles("Finance")),
 ):
-    if req.opening_balance < 0:
-        raise HTTPException(status_code=400, detail="Outstanding balance cannot be negative.")
     marker = database._placeholder()
     try:
         with database.get_connection() as connection:

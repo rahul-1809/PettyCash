@@ -572,8 +572,8 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
   const handleUpdateVaultBalance = async (e) => {
     e.preventDefault();
     const bal = parseFloat(newOpeningBalance);
-    if (isNaN(bal) || bal < 0) {
-      addToast({ type: 'error', message: 'Outstanding balance cannot be negative.' });
+    if (isNaN(bal)) {
+      addToast({ type: 'error', message: 'Please enter a valid opening balance.' });
       return;
     }
     try {
@@ -1744,21 +1744,14 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             <div>
               <h1 className="text-lg font-bold text-slate-100">Master Financial Catalog & Vault</h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Maintain accounting ledger heads, projects, vault balance adjustments, and period locks.
+                Maintain accounting ledger heads, projects, vault balance configuration, and period locks.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setAdjustmentModalOpen(true)}
-                className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
-              >
-                Balance Adjustment
-              </button>
-              <button
-                type="button"
                 onClick={() => {
-                  setNewOpeningBalance(cashBalance?.opening_balance || '');
+                  setNewOpeningBalance(cashBalance?.opening_balance ?? '');
                   setBalanceModalOpen(true);
                 }}
                 className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold cursor-pointer"
@@ -3527,7 +3520,6 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             <input
               type="number"
               step="0.01"
-              min="0"
               required
               value={newOpeningBalance}
               onChange={(e) => setNewOpeningBalance(e.target.value)}
@@ -3549,79 +3541,6 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
               className="px-4 py-1.5 rounded bg-emerald-600 text-slate-950 font-bold hover:bg-emerald-500"
             >
               Save Balance
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* ── Balance Adjustment Modal */}
-      <Modal
-        isOpen={adjustmentModalOpen}
-        onClose={() => setAdjustmentModalOpen(false)}
-        title="Record Vault Balance Adjustment"
-      >
-        <form onSubmit={handleCreateAdjustment} className="space-y-4 text-xs">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-300 font-medium mb-1">Direction *</label>
-              <select
-                value={adjDirection}
-                onChange={(e) => setAdjDirection(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm"
-              >
-                <option value="INFLOW">INFLOW (+)</option>
-                <option value="OUTFLOW">OUTFLOW (-)</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-slate-300 font-medium mb-1">Amount (₹) *</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                required
-                value={adjAmount}
-                onChange={(e) => setAdjAmount(e.target.value)}
-                placeholder="100.00"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-slate-300 font-medium mb-1">Effective Date *</label>
-            <input
-              type="date"
-              required
-              value={adjDate}
-              onChange={(e) => setAdjDate(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-slate-300 font-medium mb-1">Audit Reason *</label>
-            <input
-              type="text"
-              required
-              value={adjReason}
-              onChange={(e) => setAdjReason(e.target.value)}
-              placeholder="e.g. Bank interest credit, cash count reconciliation variance"
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm"
-            />
-          </div>
-          <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => setAdjustmentModalOpen(false)}
-              className="px-3.5 py-1.5 rounded bg-slate-800 text-slate-300"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-1.5 rounded bg-emerald-600 text-slate-950 font-bold hover:bg-emerald-500"
-            >
-              Record Adjustment
             </button>
           </div>
         </form>

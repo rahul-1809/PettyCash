@@ -285,6 +285,16 @@ class FinanceWorkflowTests(unittest.TestCase):
             200,
         )
 
+    def test_06_finance_can_set_negative_opening_balance(self):
+        res = self.client.put(
+            "/api/cash-balance",
+            headers=self.finance_headers,
+            json={"opening_balance": -2500.50},
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(float(res.json()["opening_balance"]), -2500.50)
+        self.assertEqual(float(res.json()["current_balance"]), -2500.50)
+
 
 if __name__ == "__main__":
     unittest.main()
