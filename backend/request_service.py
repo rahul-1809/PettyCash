@@ -17,6 +17,7 @@ except ImportError:
 
 VALID_TRANSITIONS = {
     ("DRAFT", "SUBMITTED"),
+    ("DRAFT", "APPROVED"),
     ("SUBMITTED", "APPROVED"),
     ("SUBMITTED", "DRAFT"),
     ("SUBMITTED", "REJECTED"),
@@ -61,6 +62,21 @@ def _approved_assignment(connection, manager_id: str, employee_id: str) -> bool:
     )
 
 
+def _get_assigned_finance(connection, manager_id: str) -> Optional[str]:
+    marker = database._placeholder()
+    row = connection.execute(
+        f"""
+        SELECT a.finance_user_id
+        FROM finance_manager_assignments a
+        JOIN users f ON f.id = a.finance_user_id
+        WHERE a.manager_id = {marker} AND a.status = 'APPROVED' AND f.is_active = 1
+        ORDER BY a.created_at DESC LIMIT 1
+        """,
+        (manager_id,),
+    ).fetchone()
+    return row["finance_user_id"] if row else None
+
+
 def _record_status(connection, request_id: str, previous: Optional[str], target: str, actor: str, reason: Optional[str]):
     marker = database._placeholder()
     connection.execute(
@@ -90,10 +106,9 @@ def create_draft(
     amount,
     purpose: str,
     notes: Optional[str],
-    approving_manager_id: str,
+    approving_manager_id: Optional[str] = None,
+    requester_role: str = "Employee",
 ) -> dict:
-    if requester_id == approving_manager_id:
-        raise ValueError("A requester cannot approve their own request.")
     if not purpose.strip():
         raise ValueError("Purpose is required.")
     if len(purpose) > 500:
@@ -106,27 +121,46 @@ def create_draft(
     request_id = secrets.token_urlsafe(18)
     timestamp = database.now_iso()
     marker = database._placeholder()
+
     with database.get_connection() as connection:
-        if not all(
-            (
-                _master_record(connection, "projects", project_id),
-                _master_record(connection, "ledgers", ledger_id),
-                _approved_assignment(connection, approving_manager_id, requester_id),
-            )
-        ):
-            raise ValueError("Project, ledger, category, and approved Manager assignment are required.")
+        if not (_master_record(connection, "projects", project_id) and _master_record(connection, "ledgers", ledger_id)):
+            raise ValueError("Active Project and Ledger are required.")
+
+        if requester_role == "Manager":
+            assigned_finance_id = _get_assigned_finance(connection, requester_id)
+            if not assigned_finance_id:
+                raise ValueError("You must be assigned to an active Finance user before raising a request.")
+            if approving_manager_id and approving_manager_id != assigned_finance_id:
+                raise ValueError("Requests can only be submitted to your assigned Finance user.")
+            effective_approver_id = assigned_finance_id
+            request_type = "MANAGER_REQUEST"
+        else:
+            if requester_id == approving_manager_id:
+                raise ValueError("A requester cannot approve their own request.")
+            if not approving_manager_id:
+                raise ValueError("A valid approving Manager is required.")
+            if not _approved_assignment(connection, approving_manager_id, requester_id):
+                raise ValueError("Project, ledger, category, and approved Manager assignment are required.")
+            effective_approver_id = approving_manager_id
+            assigned_finance_id = _get_assigned_finance(connection, approving_manager_id)
+            request_type = "EMPLOYEE_REQUEST"
+
         connection.execute(
             f"""
             INSERT INTO petty_cash_requests
-                (id, requester_id, approving_manager_id, project_id, ledger_id, category_id,
-                 category_name, request_date, amount, purpose, notes, status, created_at, updated_at)
-            VALUES ({marker}, {marker}, {marker}, {marker}, {marker}, {marker},
-                    {marker}, {marker}, {marker}, {marker}, {marker}, 'DRAFT', {marker}, {marker})
+                (id, requester_id, approving_manager_id, assigned_finance_id, request_type,
+                 project_id, ledger_id, category_id, category_name, request_date, amount,
+                 purpose, notes, status, created_at, updated_at)
+            VALUES ({marker}, {marker}, {marker}, {marker}, {marker},
+                    {marker}, {marker}, {marker}, {marker}, {marker}, {marker},
+                    {marker}, {marker}, 'DRAFT', {marker}, {marker})
             """,
             (
                 request_id,
                 requester_id,
-                approving_manager_id,
+                effective_approver_id,
+                assigned_finance_id,
+                request_type,
                 project_id,
                 ledger_id,
                 "system-request-category",
@@ -148,6 +182,7 @@ def create_draft(
             entity_id=request_id,
             after={
                 "status": "DRAFT",
+                "request_type": request_type,
                 "amount": normalized_amount,
                 "project_id": project_id,
                 "ledger_id": ledger_id,
@@ -252,6 +287,16 @@ def update_draft(request_id: str, requester_id: str, values: dict) -> dict:
 
 
 def submit_request(request_id: str, requester_id: str) -> dict:
+    marker = database._placeholder()
+    with database.get_connection() as connection:
+        row = connection.execute(
+            f"SELECT request_type FROM petty_cash_requests WHERE id={marker}",
+            (request_id,),
+        ).fetchone()
+    req_type = row["request_type"] if row else "EMPLOYEE_REQUEST"
+    if req_type == "MANAGER_REQUEST":
+        # Manager requests route directly to the assigned Finance user's posting queue
+        return _transition(request_id, requester_id, "APPROVED", None, "requester")
     return _transition(request_id, requester_id, "SUBMITTED", None, "requester")
 
 
@@ -283,6 +328,9 @@ def _transition(
             raise LookupError("Request not found.")
         if (row["status"], target) not in VALID_TRANSITIONS:
             raise ValueError(f"Cannot transition request from {row['status']} to {target}.")
+        req_type = row["request_type"] if "request_type" in row.keys() else "EMPLOYEE_REQUEST"
+        if row["status"] == "DRAFT" and target == "APPROVED" and req_type != "MANAGER_REQUEST":
+            raise ValueError("Employee requests must be submitted to a Manager before approval.")
         if actor_type == "requester" and row["requester_id"] != actor_id:
             raise PermissionError("Only the requester can submit this request.")
         if actor_type == "manager" and (
@@ -290,12 +338,18 @@ def _transition(
             or not _approved_assignment(connection, actor_id, row["requester_id"])
         ):
             raise PermissionError("Only the approved Manager can review this request.")
+
+        assigned_finance_id = row["assigned_finance_id"] if "assigned_finance_id" in row.keys() else None
+        if target == "APPROVED" and req_type == "EMPLOYEE_REQUEST" and not assigned_finance_id:
+            assigned_finance_id = _get_assigned_finance(connection, row["approving_manager_id"])
+
         timestamp = database.now_iso()
         connection.execute(
             f"""
             UPDATE petty_cash_requests
             SET status={marker}, change_reason={marker}, rejection_reason={marker},
-                submitted_at=CASE WHEN {marker}='SUBMITTED' THEN {marker} ELSE submitted_at END,
+                assigned_finance_id=COALESCE({marker}, assigned_finance_id),
+                submitted_at=CASE WHEN {marker} IN ('SUBMITTED', 'APPROVED') AND submitted_at IS NULL THEN {marker} ELSE submitted_at END,
                 approved_at=CASE WHEN {marker}='APPROVED' THEN {marker} ELSE approved_at END,
                 updated_at={marker}
             WHERE id={marker}
@@ -304,6 +358,7 @@ def _transition(
                 target,
                 reason if target == "DRAFT" else None,
                 reason if target == "REJECTED" else None,
+                assigned_finance_id,
                 target,
                 timestamp,
                 target,
@@ -345,21 +400,6 @@ def _transition(
     amt_str = f"₹{Decimal(str(row['amount'])).quantize(Decimal('0.01'))}"
     purpose_str = row["purpose"] or "Petty cash expense"
 
-    def _notify_admins(evt_type: str, notif_title: str, notif_msg: str):
-        try:
-            with database.get_connection() as conn:
-                marker = database._placeholder()
-                admin_rows = conn.execute(
-                    f"SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = {marker} AND u.is_active = 1",
-                    ("Admin",),
-                ).fetchall()
-                for ar in admin_rows:
-                    aid = ar["id"] if isinstance(ar, dict) else ar[0]
-                    if aid != row["approving_manager_id"]:
-                        create_notification(aid, evt_type, notif_title, notif_msg, "petty_cash_request", request_id)
-        except Exception as exc:
-            logging.getLogger("petty_cash.app").warning(f"Failed to notify admins: {exc}")
-
     if target == "SUBMITTED":
         create_notification(
             row["approving_manager_id"],
@@ -369,25 +409,35 @@ def _transition(
             "petty_cash_request",
             request_id,
         )
-        _notify_admins(
-            "REQUEST_SUBMITTED",
-            f"New request submitted by {requester_name}",
-            f"Request for {amt_str} ({purpose_str}) submitted by {requester_name} awaiting approval by Manager {manager_name}.",
-        )
     elif target == "APPROVED":
-        create_notification(
-            row["requester_id"],
-            "REQUEST_APPROVED",
-            f"Petty cash request approved by {manager_name}",
-            f"Your request for {amt_str} ({purpose_str}) was approved by Manager {manager_name}. Please upload voucher receipts and submit for posting.",
-            "petty_cash_request",
-            request_id,
-        )
-        _notify_admins(
-            "REQUEST_APPROVED",
-            f"Petty cash request approved by {manager_name}",
-            f"Request for {amt_str} ({purpose_str}) by {requester_name} approved by Manager {manager_name}. Awaiting voucher upload and posting.",
-        )
+        if req_type == "MANAGER_REQUEST":
+            if assigned_finance_id:
+                create_notification(
+                    assigned_finance_id,
+                    "MANAGER_REQUEST_SUBMITTED",
+                    f"Manager request from {requester_name}",
+                    f"Manager {requester_name} raised a request for {amt_str} ({purpose_str}) awaiting your review and posting.",
+                    "petty_cash_request",
+                    request_id,
+                )
+        else:
+            create_notification(
+                row["requester_id"],
+                "REQUEST_APPROVED",
+                f"Petty cash request approved by {manager_name}",
+                f"Your request for {amt_str} ({purpose_str}) was approved by Manager {manager_name} and sent to Finance for posting. You can attach vouchers now or later.",
+                "petty_cash_request",
+                request_id,
+            )
+            if assigned_finance_id:
+                create_notification(
+                    assigned_finance_id,
+                    "REQUEST_READY_FOR_POSTING",
+                    f"Approved request ready for posting",
+                    f"Request for {amt_str} ({purpose_str}) by {requester_name} was approved by Manager {manager_name} and is ready for posting.",
+                    "petty_cash_request",
+                    request_id,
+                )
     elif target == "DRAFT":
         create_notification(
             row["requester_id"],
@@ -460,7 +510,12 @@ def list_requests(
     if role == "Employee":
         clause, params = f"WHERE r.requester_id={marker}", [user_id]
     elif role == "Manager":
-        clause, params = f"WHERE r.approving_manager_id={marker}", [user_id]
+        clause, params = f"WHERE (r.approving_manager_id={marker} OR r.requester_id={marker})", [user_id, user_id]
+    elif role == "Finance":
+        clause, params = (
+            f"WHERE (r.assigned_finance_id={marker} OR r.assigned_finance_id IS NULL OR r.requester_id={marker})",
+            [user_id, user_id],
+        )
     else:
         clause, params = "", []
     pagination_clause = ""
@@ -471,18 +526,22 @@ def list_requests(
         rows = connection.execute(
             f"""
             SELECT r.id, r.request_date, r.amount, r.purpose, r.notes, r.status,
+                   r.request_type, r.assigned_finance_id,
                    r.change_reason, r.rejection_reason,
                    COALESCE(r.change_reason, r.rejection_reason) AS decision_reason,
                    r.requester_id, r.approving_manager_id,
                    u_req.username AS requester_username, u_req.email AS requester_email,
                    u_mgr.username AS manager_username, u_mgr.email AS manager_email,
+                   u_fin.username AS finance_username, u_fin.email AS finance_email,
                    p.name AS project_name, l.name AS ledger_name, r.category_name,
+                   (SELECT COUNT(*) FROM supporting_files sf WHERE sf.request_id = r.id) AS supporting_count,
                    r.created_at, r.updated_at
             FROM petty_cash_requests r
             JOIN projects p ON p.id=r.project_id
             JOIN ledgers l ON l.id=r.ledger_id
             LEFT JOIN users u_req ON u_req.id=r.requester_id
             LEFT JOIN users u_mgr ON u_mgr.id=r.approving_manager_id
+            LEFT JOIN users u_fin ON u_fin.id=r.assigned_finance_id
             {clause}
             ORDER BY r.created_at DESC
             {pagination_clause}

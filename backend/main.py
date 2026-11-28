@@ -34,6 +34,7 @@ try:
     )
     from backend.auth_service import (
         authenticate_user,
+        change_password,
         create_onboarding_token,
         create_session as create_auth_session,
         get_authenticated_user,
@@ -54,9 +55,12 @@ try:
     from backend.user_service import (
         create_assignment,
         create_bootstrap_admin,
+        create_finance_assignment,
         deactivate_user,
+        delete_finance_assignment,
         delete_user,
         list_assignments,
+        list_finance_assignments,
         list_users,
         provision_user,
         reactivate_user,
@@ -70,7 +74,7 @@ try:
         submit_request,
         update_draft,
     )
-    from backend.posting_service import post_request, return_for_correction
+    from backend.posting_service import create_finance_direct_expense, post_request, return_for_correction
     from backend.supporting_service import (
         get_supporting_file,
         list_supporting_files,
@@ -146,6 +150,7 @@ except ImportError:
     )
     from auth_service import (
         authenticate_user,
+        change_password,
         create_session as create_auth_session,
         get_authenticated_user,
         revoke_session,
@@ -165,9 +170,12 @@ except ImportError:
     from user_service import (
         create_assignment,
         create_bootstrap_admin,
+        create_finance_assignment,
         deactivate_user,
+        delete_finance_assignment,
         delete_user,
         list_assignments,
+        list_finance_assignments,
         list_users,
         provision_user,
         reactivate_user,
@@ -181,7 +189,7 @@ except ImportError:
         submit_request,
         update_draft,
     )
-    from posting_service import post_request, return_for_correction
+    from posting_service import create_finance_direct_expense, post_request, return_for_correction
     from supporting_service import (
         get_supporting_file,
         list_supporting_files,
@@ -418,6 +426,11 @@ class SetPasswordRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class ProvisionUserRequest(BaseModel):
     username: str
     email: str
@@ -427,6 +440,11 @@ class ProvisionUserRequest(BaseModel):
 class AssignmentRequest(BaseModel):
     manager_id: str
     employee_id: str
+
+
+class FinanceAssignmentRequest(BaseModel):
+    finance_user_id: str
+    manager_id: str
 
 
 class AssignmentReviewRequest(BaseModel):
@@ -447,7 +465,25 @@ class PettyCashRequestCreate(BaseModel):
     amount: Decimal = Field(..., gt=0, lt=100_000_000)
     purpose: str = Field(..., min_length=1, max_length=500)
     notes: Optional[str] = Field(None, max_length=2000)
-    approving_manager_id: str
+    approving_manager_id: Optional[str] = None
+
+    @field_validator("amount", mode="after")
+    @classmethod
+    def check_amount_precision(cls, v: Decimal) -> Decimal:
+        if round(v, 2) != v:
+            raise ValueError("Amount cannot have more than 2 decimal places.")
+        return v
+
+
+class FinanceDirectExpenseRequest(BaseModel):
+    project_id: str
+    ledger_id: str
+    category: str
+    effective_date: str
+    amount: Decimal = Field(..., gt=0, lt=100_000_000)
+    purpose: str = Field(..., min_length=1, max_length=500)
+    notes: Optional[str] = Field(None, max_length=2000)
+    cash_account_id: Optional[str] = "system-main-cash"
 
     @field_validator("amount", mode="after")
     @classmethod
@@ -638,13 +674,16 @@ def optional_current_user(
 
 
 def require_roles(*roles: str):
+    normalized_roles = {"Director" if r == "Admin" else r for r in roles}
+
     def dependency(user: dict = Depends(current_user)) -> dict:
-        if user["role"] not in roles:
+        user_role = "Director" if user["role"] == "Admin" else user["role"]
+        if user_role not in normalized_roles:
             record_audit_event(
                 actor_user_id=user["id"],
                 action="AUTH_ACCESS_DENIED",
                 entity_type="rbac",
-                after={"required_roles": list(roles), "user_role": user["role"]},
+                after={"required_roles": sorted(normalized_roles), "user_role": user["role"]},
             )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions.")
         return user
@@ -654,17 +693,16 @@ def require_roles(*roles: str):
 
 # ─── Authentication, Users, Assignments, Notifications ─────────────────────
 
-@app.get("/api/auth/bootstrap-status", tags=["Authentication"], summary="Check if initial admin bootstrap is required")
+@app.get("/api/auth/bootstrap-status", tags=["Authentication"], summary="Check if initial Director bootstrap is required")
 def check_bootstrap_status():
     marker = database._placeholder()
     with database.get_connection() as connection:
         admin_row = connection.execute(
-            f"""
+            """
             SELECT u.id FROM users u
             JOIN roles r ON r.id=u.role_id
-            WHERE r.name={marker} AND u.is_active=1
-            """,
-            ("Admin",),
+            WHERE r.name IN ('Director', 'Admin') AND u.is_active=1
+            """
         ).fetchone()
     return {"admin_exists": bool(admin_row)}
 
@@ -701,6 +739,16 @@ def set_password(req: SetPasswordRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/auth/change-password", tags=["Authentication"], summary="Change password for authenticated user")
+def api_change_password(req: ChangePasswordRequest, user: dict = Depends(current_user)):
+    try:
+        return change_password(user["id"], req.current_password, req.new_password, user.get("_token"))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/auth/logout", tags=["Authentication"], summary="User logout")
 def logout(user: dict = Depends(current_user)):
     revoke_session(user["_token"])
@@ -713,10 +761,10 @@ def auth_me(user: dict = Depends(current_user)):
     return user
 
 
-@app.post("/api/users", tags=["Users & Assignments"], summary="Provision new user (Admin)")
+@app.post("/api/users", tags=["Users & Assignments"], summary="Provision new user (Director)")
 def create_user(
     req: ProvisionUserRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Director")),
 ):
     try:
         smtp_values = {
@@ -762,13 +810,13 @@ def create_user(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/users", tags=["Users & Assignments"], summary="List users (Admin)")
-def get_users(include_inactive: bool = True, _: dict = Depends(require_roles("Admin"))):
+@app.get("/api/users", tags=["Users & Assignments"], summary="List users (Director & Finance)")
+def get_users(include_inactive: bool = True, _: dict = Depends(require_roles("Director", "Finance"))):
     return list_users(include_inactive=include_inactive)
 
 
-@app.post("/api/users/{user_id}/token", tags=["Users & Assignments"], summary="Generate setup token for user (Admin)")
-def generate_user_token_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
+@app.post("/api/users/{user_id}/token", tags=["Users & Assignments"], summary="Generate setup token for user (Director)")
+def generate_user_token_endpoint(user_id: str, admin: dict = Depends(require_roles("Director"))):
     try:
         token = create_onboarding_token(user_id)
         return {"user_id": user_id, "onboarding_token": token}
@@ -778,8 +826,8 @@ def generate_user_token_endpoint(user_id: str, admin: dict = Depends(require_rol
         raise HTTPException(status_code=400, detail=f"Failed to generate token: {exc}") from exc
 
 
-@app.post("/api/users/{user_id}/deactivate", tags=["Users & Assignments"], summary="Deactivate user (Admin)")
-def deactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
+@app.post("/api/users/{user_id}/deactivate", tags=["Users & Assignments"], summary="Deactivate user (Director)")
+def deactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Director"))):
     try:
         return deactivate_user(user_id, admin["id"])
     except LookupError as exc:
@@ -791,8 +839,8 @@ def deactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("
         raise HTTPException(status_code=500, detail="Failed to deactivate user.") from exc
 
 
-@app.post("/api/users/{user_id}/reactivate", tags=["Users & Assignments"], summary="Reactivate user (Admin)")
-def reactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
+@app.post("/api/users/{user_id}/reactivate", tags=["Users & Assignments"], summary="Reactivate user (Director)")
+def reactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Director"))):
     try:
         return reactivate_user(user_id, admin["id"])
     except LookupError as exc:
@@ -804,8 +852,8 @@ def reactivate_user_endpoint(user_id: str, admin: dict = Depends(require_roles("
         raise HTTPException(status_code=500, detail="Failed to reactivate user.") from exc
 
 
-@app.delete("/api/users/{user_id}", tags=["Users & Assignments"], summary="Delete or deactivate user (Admin)")
-def delete_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admin"))):
+@app.delete("/api/users/{user_id}", tags=["Users & Assignments"], summary="Delete or deactivate user (Director)")
+def delete_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Director"))):
     try:
         return delete_user(user_id, admin["id"])
     except LookupError as exc:
@@ -816,13 +864,13 @@ def delete_user_endpoint(user_id: str, admin: dict = Depends(require_roles("Admi
         raise HTTPException(status_code=400, detail=f"Failed to delete user: {exc}") from exc
 
 
-@app.post("/api/assignments", tags=["Users & Assignments"], summary="Create manager-employee assignment (Admin)")
+@app.post("/api/assignments", tags=["Users & Assignments"], summary="Create manager-employee assignment (Finance)")
 def assign_employee(
     req: AssignmentRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    finance: dict = Depends(require_roles("Finance")),
 ):
     try:
-        return create_assignment(req.manager_id, req.employee_id, admin["id"])
+        return create_assignment(req.manager_id, req.employee_id, finance["id"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -832,6 +880,33 @@ def assign_employee(
 @app.get("/api/assignments", tags=["Users & Assignments"], summary="List manager assignments")
 def get_assignments(user: dict = Depends(current_user)):
     return list_assignments(user["id"], user["role"])
+
+
+@app.post("/api/finance-assignments", tags=["Users & Assignments"], summary="Assign Finance user to Manager (Finance)")
+def api_create_finance_assignment(
+    req: FinanceAssignmentRequest,
+    finance: dict = Depends(require_roles("Finance")),
+):
+    try:
+        return create_finance_assignment(req.finance_user_id, req.manager_id, finance["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/finance-assignments", tags=["Users & Assignments"], summary="List Finance-Manager assignments")
+def api_list_finance_assignments(user: dict = Depends(require_roles("Finance", "Manager", "Director"))):
+    return list_finance_assignments(user["id"], user["role"])
+
+
+@app.delete("/api/finance-assignments/{assignment_id}", tags=["Users & Assignments"], summary="Remove Finance-Manager assignment (Finance)")
+def api_delete_finance_assignment(
+    assignment_id: str,
+    finance: dict = Depends(require_roles("Finance")),
+):
+    try:
+        return delete_finance_assignment(assignment_id, finance["id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/assignments/{assignment_id}/review", tags=["Users & Assignments"], summary="Review manager assignment (Manager)")
@@ -913,8 +988,8 @@ def get_projects(user: dict = Depends(current_user)):
     return list_master_records("projects")
 
 
-@app.post("/api/projects", tags=["Projects, Ledgers & Categories"], summary="Create project (Admin)")
-def add_project(req: MasterDataRequest, admin: dict = Depends(require_roles("Admin"))):
+@app.post("/api/projects", tags=["Projects, Ledgers & Categories"], summary="Create project (Finance)")
+def add_project(req: MasterDataRequest, admin: dict = Depends(require_roles("Finance"))):
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Project name cannot be empty.")
     try:
@@ -923,21 +998,21 @@ def add_project(req: MasterDataRequest, admin: dict = Depends(require_roles("Adm
         raise HTTPException(status_code=400, detail="Project could not be created.") from exc
 
 
-@app.patch("/api/projects/{project_id}", tags=["Projects, Ledgers & Categories"], summary="Update project status (Admin)")
+@app.patch("/api/projects/{project_id}", tags=["Projects, Ledgers & Categories"], summary="Update project status (Finance)")
 def set_project_status(
     project_id: str,
     req: MasterDataStatusRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     if not set_master_record_active("projects", project_id, req.is_active, actor_id=admin["id"]):
         raise HTTPException(status_code=404, detail="Project not found.")
     return {"id": project_id, "is_active": req.is_active}
 
 
-@app.delete("/api/projects/{project_id}", tags=["Projects, Ledgers & Categories"], summary="Delete project (Admin)")
+@app.delete("/api/projects/{project_id}", tags=["Projects, Ledgers & Categories"], summary="Delete project (Finance)")
 def api_delete_project(
     project_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return delete_master_record("projects", project_id, actor_id=admin["id"])
@@ -952,8 +1027,8 @@ def get_ledgers(_: dict = Depends(current_user)):
     return list_master_records("ledgers")
 
 
-@app.post("/api/ledgers", tags=["Projects, Ledgers & Categories"], summary="Create ledger (Admin)")
-def add_ledger(req: MasterDataRequest, admin: dict = Depends(require_roles("Admin"))):
+@app.post("/api/ledgers", tags=["Projects, Ledgers & Categories"], summary="Create ledger (Finance)")
+def add_ledger(req: MasterDataRequest, admin: dict = Depends(require_roles("Finance"))):
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Ledger name cannot be empty.")
     try:
@@ -962,21 +1037,21 @@ def add_ledger(req: MasterDataRequest, admin: dict = Depends(require_roles("Admi
         raise HTTPException(status_code=400, detail="Ledger could not be created.") from exc
 
 
-@app.patch("/api/ledgers/{ledger_id}", tags=["Projects, Ledgers & Categories"], summary="Update ledger status (Admin)")
+@app.patch("/api/ledgers/{ledger_id}", tags=["Projects, Ledgers & Categories"], summary="Update ledger status (Finance)")
 def set_ledger_status(
     ledger_id: str,
     req: MasterDataStatusRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     if not set_master_record_active("ledgers", ledger_id, req.is_active, actor_id=admin["id"]):
         raise HTTPException(status_code=404, detail="Ledger not found.")
     return {"id": ledger_id, "is_active": req.is_active}
 
 
-@app.delete("/api/ledgers/{ledger_id}", tags=["Projects, Ledgers & Categories"], summary="Delete ledger (Admin)")
+@app.delete("/api/ledgers/{ledger_id}", tags=["Projects, Ledgers & Categories"], summary="Delete ledger (Finance)")
 def api_delete_ledger(
     ledger_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return delete_master_record("ledgers", ledger_id, actor_id=admin["id"])
@@ -995,10 +1070,10 @@ def get_cash_balance(_: dict = Depends(current_user)):
     return account
 
 
-@app.put("/api/cash-balance", tags=["Cash Balance & Accounts"], summary="Update petty cash balance (Admin)")
+@app.put("/api/cash-balance", tags=["Cash Balance & Accounts"], summary="Update petty cash balance (Finance)")
 def configure_cash_balance(
     req: CashAccountRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     if req.opening_balance < 0:
         raise HTTPException(status_code=400, detail="Outstanding balance cannot be negative.")
@@ -1098,11 +1173,11 @@ def configure_cash_balance(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/company-receipts", tags=["Company Receipts"], summary="Create company receipt (Admin)")
+@app.post("/api/company-receipts", tags=["Company Receipts"], summary="Create company receipt (Finance)")
 def create_cash_receipt(
     req: CompanyReceiptRequest,
     request: Request,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     target_date = req.receipt_date or req.date
     if not target_date:
@@ -1125,21 +1200,21 @@ def create_cash_receipt(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/company-receipts", tags=["Company Receipts"], summary="List company receipts (Admin)")
-def get_cash_receipts(admin: dict = Depends(require_roles("Admin"))):
+@app.get("/api/company-receipts", tags=["Company Receipts"], summary="List company receipts (Finance)")
+def get_cash_receipts(admin: dict = Depends(require_roles("Finance"))):
     return list_company_receipts(admin["id"])
 
 
 # ─── Petty Cash Request Lifecycle ───────────────────────────────────────────
 
-@app.post("/api/requests", tags=["Requests & Approvals"], summary="Create petty cash request draft (Employee)")
+@app.post("/api/requests", tags=["Requests & Approvals"], summary="Create petty cash request draft (Employee & Manager)")
 def create_petty_cash_request(
     req: PettyCashRequestCreate,
-    employee: dict = Depends(require_roles("Employee")),
+    user: dict = Depends(require_roles("Employee", "Manager")),
 ):
     try:
         return create_draft(
-            employee["id"],
+            user["id"],
             req.project_id,
             req.ledger_id,
             req.category,
@@ -1148,6 +1223,7 @@ def create_petty_cash_request(
             req.purpose,
             req.notes,
             req.approving_manager_id,
+            requester_role=user["role"],
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1170,22 +1246,22 @@ def get_petty_cash_request(request_id: str, user: dict = Depends(current_user)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if user["role"] == "Employee" and request_data["requester_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="You cannot access this request.")
-    if user["role"] == "Manager" and request_data["approving_manager_id"] != user["id"]:
+    if user["role"] == "Manager" and request_data["approving_manager_id"] != user["id"] and request_data["requester_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="You cannot access this request.")
     return request_data
 
 
-@app.post("/api/requests/{request_id}/supporting-files", tags=["Supporting Files"], summary="Upload supporting receipt file (Employee)")
+@app.post("/api/requests/{request_id}/supporting-files", tags=["Supporting Files"], summary="Upload supporting receipt file (Employee, Manager, Finance)")
 async def upload_request_supporting_file(
     request_id: str,
     file: UploadFile = File(...),
-    employee: dict = Depends(require_roles("Employee")),
+    user: dict = Depends(require_roles("Employee", "Manager", "Finance")),
 ):
     try:
         content = await file.read()
         return upload_supporting_file(
             request_id,
-            employee["id"],
+            user["id"],
             file.filename or "",
             file.content_type or "",
             content,
@@ -1207,7 +1283,7 @@ def get_request_supporting_files(
         request_data = get_request(request_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if user["role"] != "Admin" and request_data["requester_id"] != user["id"]:
+    if user["role"] not in ("Director", "Admin", "Finance") and request_data["requester_id"] != user["id"] and request_data["approving_manager_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="You cannot access these supporting files.")
     return list_supporting_files(request_id)
 
@@ -1253,16 +1329,14 @@ def api_submit_for_posting(
             entity_id=request_id,
             after={"status": "SUPPORTING_UPLOADED"},
         )
-        admins = connection.execute(
-            "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.name='Admin' AND u.is_active=1"
-        ).fetchall()
         connection.commit()
 
     amt_str = f"₹{Decimal(str(req_row['amount'])).quantize(Decimal('0.01'))}"
     purpose_str = req_row["purpose"] or "Petty cash expense"
-    for adm in admins:
+    fin_id = req_row["assigned_finance_id"] if "assigned_finance_id" in req_row.keys() else None
+    if fin_id:
         create_notification(
-            adm["id"],
+            fin_id,
             "REQUEST_READY_FOR_POSTING",
             f"Voucher submitted by {employee['username']}",
             f"Request for {amt_str} ({purpose_str}) by {employee['username']} has vouchers attached and is ready for posting.",
@@ -1297,24 +1371,48 @@ def download_supporting_file(
 
 
 @app.post("/api/requests/{request_id}/post", tags=["Posting & Accounting"], summary="Post request to official ledger (Admin)")
+@app.post("/api/requests/{request_id}/post", tags=["Posting & Accounting"], summary="Post approved request to ledger (Finance)")
 def post_petty_cash_request(
     request_id: str,
     req: PostingRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    finance: dict = Depends(require_roles("Finance")),
 ):
     try:
-        return post_request(request_id, admin["id"], req.effective_date)
+        return post_request(request_id, finance["id"], req.effective_date)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/requests/{request_id}/return-for-correction", tags=["Posting & Accounting"], summary="Return request for correction (Admin)")
+@app.post("/api/finance/direct-expense", tags=["Posting & Accounting"], summary="Record and post direct company expense (Finance)")
+def api_finance_direct_expense(
+    req: FinanceDirectExpenseRequest,
+    finance: dict = Depends(require_roles("Finance")),
+):
+    try:
+        return create_finance_direct_expense(
+            finance_user_id=finance["id"],
+            project_id=req.project_id,
+            ledger_id=req.ledger_id,
+            category=req.category,
+            effective_date=req.effective_date,
+            amount=req.amount,
+            purpose=req.purpose,
+            notes=req.notes,
+            cash_account_id=req.cash_account_id or "system-main-cash",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/requests/{request_id}/return-for-correction", tags=["Posting & Accounting"], summary="Return request for correction (Finance)")
 def return_petty_cash_request_for_correction(
     request_id: str,
     req: RequestDecision,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return return_for_correction(request_id, admin["id"], req.reason or "")
@@ -1324,11 +1422,11 @@ def return_petty_cash_request_for_correction(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.patch("/api/requests/{request_id}", tags=["Requests & Approvals"], summary="Update petty cash draft (Employee)")
+@app.patch("/api/requests/{request_id}", tags=["Requests & Approvals"], summary="Update petty cash draft (Employee & Manager)")
 def edit_petty_cash_request(
     request_id: str,
     req: PettyCashRequestUpdate,
-    employee: dict = Depends(require_roles("Employee")),
+    employee: dict = Depends(require_roles("Employee", "Manager")),
 ):
     values = {key: value for key, value in req.model_dump().items() if value is not None}
     try:
@@ -1339,10 +1437,10 @@ def edit_petty_cash_request(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/requests/{request_id}/submit", tags=["Requests & Approvals"], summary="Submit draft for manager approval (Employee)")
+@app.post("/api/requests/{request_id}/submit", tags=["Requests & Approvals"], summary="Submit draft for approval/posting (Employee & Manager)")
 def submit_petty_cash_request(
     request_id: str,
-    employee: dict = Depends(require_roles("Employee")),
+    employee: dict = Depends(require_roles("Employee", "Manager")),
 ):
     try:
         return submit_request(request_id, employee["id"])
@@ -1403,7 +1501,7 @@ def reject_petty_cash_request(
 
 # ─── Phase 7: Financial Controls, Reversals, Adjustments, Periods & Legacy Ledger ───
 
-@app.get("/api/audit-events", tags=["Audit Events"], summary="List immutable audit trail events (Admin)")
+@app.get("/api/audit-events", tags=["Audit Events"], summary="List immutable audit trail events (Director)")
 def api_list_audit_events(
     action: Optional[str] = None,
     entity_type: Optional[str] = None,
@@ -1411,7 +1509,7 @@ def api_list_audit_events(
     actor_user_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    _: dict = Depends(require_roles("Admin")),
+    _: dict = Depends(require_roles("Director")),
 ):
     return list_audit_events(
         actor_user_id=actor_user_id,
@@ -1423,10 +1521,10 @@ def api_list_audit_events(
     )
 
 
-@app.get("/api/audit-events/{event_id}", tags=["Audit Events"], summary="Get single audit event details (Admin)")
+@app.get("/api/audit-events/{event_id}", tags=["Audit Events"], summary="Get single audit event details (Director)")
 def api_get_audit_event(
     event_id: str,
-    _: dict = Depends(require_roles("Admin")),
+    _: dict = Depends(require_roles("Director")),
 ):
     event = get_audit_event(event_id)
     if not event:
@@ -1434,10 +1532,10 @@ def api_get_audit_event(
     return event
 
 
-@app.post("/api/financial-periods", tags=["Financial Controls & Periods"], summary="Create financial period (Admin)")
+@app.post("/api/financial-periods", tags=["Financial Controls & Periods"], summary="Create financial period (Finance)")
 def api_create_financial_period(
     req: FinancialPeriodCreate,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return create_financial_period(admin["id"], req.period_start, req.period_end)
@@ -1445,17 +1543,17 @@ def api_create_financial_period(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/financial-periods", tags=["Financial Controls & Periods"], summary="List financial periods (Admin)")
+@app.get("/api/financial-periods", tags=["Financial Controls & Periods"], summary="List financial periods (Finance)")
 def api_list_financial_periods(
-    _: dict = Depends(require_roles("Admin")),
+    _: dict = Depends(require_roles("Finance")),
 ):
     return list_financial_periods()
 
 
-@app.post("/api/financial-periods/{period_id}/close", tags=["Financial Controls & Periods"], summary="Close financial period (Admin)")
+@app.post("/api/financial-periods/{period_id}/close", tags=["Financial Controls & Periods"], summary="Close financial period (Finance)")
 def api_close_financial_period(
     period_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return close_financial_period(period_id, admin["id"])
@@ -1465,10 +1563,10 @@ def api_close_financial_period(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/financial-periods/{period_id}/reopen", tags=["Financial Controls & Periods"], summary="Reopen financial period (Admin)")
+@app.post("/api/financial-periods/{period_id}/reopen", tags=["Financial Controls & Periods"], summary="Reopen financial period (Finance)")
 def api_reopen_financial_period(
     period_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return reopen_financial_period(period_id, admin["id"])
@@ -1478,11 +1576,11 @@ def api_reopen_financial_period(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/requests/{request_id}/reverse", tags=["Financial Controls & Periods"], summary="Reverse posted request (Admin)")
+@app.post("/api/requests/{request_id}/reverse", tags=["Financial Controls & Periods"], summary="Reverse posted request (Finance)")
 def api_reverse_petty_cash_request(
     request_id: str,
     req: ReversalRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return reverse_posted_request(request_id, admin["id"], req.reason, req.effective_date)
@@ -1492,11 +1590,11 @@ def api_reverse_petty_cash_request(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/company-receipts/{receipt_id}/reverse", tags=["Financial Controls & Periods"], summary="Reverse company receipt (Admin)")
+@app.post("/api/company-receipts/{receipt_id}/reverse", tags=["Financial Controls & Periods"], summary="Reverse company receipt (Finance)")
 def api_reverse_company_receipt(
     receipt_id: str,
     req: ReversalRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return reverse_company_receipt(receipt_id, admin["id"], req.reason, req.effective_date)
@@ -1506,10 +1604,10 @@ def api_reverse_company_receipt(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/cash-adjustments", tags=["Financial Controls & Periods"], summary="Create manual balance adjustment (Admin)")
+@app.post("/api/cash-adjustments", tags=["Financial Controls & Periods"], summary="Create manual balance adjustment (Finance)")
 def api_create_cash_adjustment(
     req: BalanceAdjustmentRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return create_balance_adjustment(
@@ -1524,18 +1622,18 @@ def api_create_cash_adjustment(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/cash-adjustments", tags=["Financial Controls & Periods"], summary="List manual balance adjustments (Admin)")
+@app.get("/api/cash-adjustments", tags=["Financial Controls & Periods"], summary="List manual balance adjustments (Finance)")
 def api_list_cash_adjustments(
     cash_account_id: str = "system-main-cash",
-    _: dict = Depends(require_roles("Admin")),
+    _: dict = Depends(require_roles("Finance")),
 ):
     return list_adjustments(cash_account_id=cash_account_id)
 
 
-@app.post("/api/legacy-ledger/import-session/{session_id}", tags=["Legacy Ledger"], summary="Import session to isolated legacy ledger (Admin)")
+@app.post("/api/legacy-ledger/import-session/{session_id}", tags=["Legacy Ledger"], summary="Import session to isolated legacy ledger (Finance)")
 def api_import_session_to_legacy(
     session_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return import_session_to_legacy(admin["id"], session_id)
@@ -1545,17 +1643,17 @@ def api_import_session_to_legacy(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-@app.get("/api/legacy-ledger/sessions", tags=["Legacy Ledger"], summary="List legacy ledger sessions (Admin)")
+@app.get("/api/legacy-ledger/sessions", tags=["Legacy Ledger"], summary="List legacy ledger sessions (Finance)")
 def api_list_legacy_sessions(
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     return list_legacy_sessions(admin["id"])
 
 
-@app.get("/api/legacy-ledger/sessions/{session_id}", tags=["Legacy Ledger"], summary="Get legacy ledger session (Admin)")
+@app.get("/api/legacy-ledger/sessions/{session_id}", tags=["Legacy Ledger"], summary="Get legacy ledger session (Finance)")
 def api_get_legacy_session(
     session_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return get_legacy_session(session_id, admin["id"])
@@ -1563,11 +1661,11 @@ def api_get_legacy_session(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.put("/api/legacy-ledger/sessions/{session_id}", tags=["Legacy Ledger"], summary="Update legacy ledger session (Admin)")
+@app.put("/api/legacy-ledger/sessions/{session_id}", tags=["Legacy Ledger"], summary="Update legacy ledger session (Finance)")
 def api_update_legacy_session(
     session_id: str,
     req: LegacySessionUpdateRequest,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         return update_legacy_session(
@@ -1585,10 +1683,10 @@ def api_update_legacy_session(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.delete("/api/legacy-ledger/sessions/{session_id}", tags=["Legacy Ledger"], summary="Delete legacy ledger session (Admin)")
+@app.delete("/api/legacy-ledger/sessions/{session_id}", tags=["Legacy Ledger"], summary="Delete legacy ledger session (Finance)")
 def api_delete_legacy_session(
     session_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     try:
         delete_legacy_session(session_id, admin["id"])
@@ -1602,7 +1700,7 @@ def api_delete_legacy_session(
 @app.get("/api/reports/monthly", tags=["Reports & Exports"], summary="Get monthly report data")
 def api_get_monthly_report(
     month: Optional[str] = None,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Director", "Finance", "Manager")),
 ):
     """Monthly report showing posted totals, daily movement, breakdowns, and unposted requests."""
     selected_month = month or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
@@ -1616,7 +1714,7 @@ def api_get_monthly_report(
 def api_export_monthly_excel(
     request: Request,
     month: Optional[str] = None,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Director", "Finance", "Manager")),
 ):
     """Export monthly report to an Excel workbook using the standardized 12-column schema."""
     selected_month = month or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
@@ -1640,10 +1738,10 @@ def api_export_monthly_excel(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/reports/monthly/zip", tags=["Reports & Exports"], summary="Export monthly report bundle as ZIP (Admin)")
+@app.get("/api/reports/monthly/zip", tags=["Reports & Exports"], summary="Export monthly report bundle as ZIP (Director, Finance, Manager)")
 def api_export_monthly_zip(
     month: Optional[str] = None,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Director", "Finance", "Manager")),
 ):
     """Export monthly ZIP package containing 12-column workbook with relative links, offline evidence viewer, and all supporting files."""
     selected_month = month or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
@@ -1665,10 +1763,10 @@ def api_export_monthly_zip(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/legacy-ledger/sessions/{session_id}/export", tags=["Legacy Ledger"], summary="Export legacy session as 12-column Excel (Admin)")
+@app.get("/api/legacy-ledger/sessions/{session_id}/export", tags=["Legacy Ledger"], summary="Export legacy session as 12-column Excel (Finance)")
 def api_export_legacy_session(
     session_id: str,
-    admin: dict = Depends(require_roles("Admin")),
+    admin: dict = Depends(require_roles("Finance")),
 ):
     """Export an isolated legacy session into the standardized 12-column Excel schema."""
     try:
@@ -1740,7 +1838,7 @@ def health_check():
     summary="Get API and business metrics (Admin)",
     description="Retrieves API latency/status counts and domain business performance indicators.",
 )
-def get_metrics(admin: dict = Depends(require_roles("Admin"))):
+def get_metrics(admin: dict = Depends(require_roles("Director"))):
     return {
         "api_metrics": global_metrics_collector.get_api_metrics(),
         "business_metrics": get_business_metrics(),
@@ -1754,7 +1852,7 @@ def get_metrics(admin: dict = Depends(require_roles("Admin"))):
     summary="Get recent production errors (Admin)",
     description="Returns recent exceptions captured by the in-memory ring buffer for post-mortem debugging.",
 )
-def get_recent_errors(limit: int = 50, admin: dict = Depends(require_roles("Admin"))):
+def get_recent_errors(limit: int = 50, admin: dict = Depends(require_roles("Director"))):
     errors = global_error_tracker.get_errors(limit=limit)
     return {"count": len(errors), "errors": errors}
 
@@ -1765,7 +1863,7 @@ def get_recent_errors(limit: int = 50, admin: dict = Depends(require_roles("Admi
     summary="Create online database backup (Admin)",
     description="Performs an online, non-blocking ACID database snapshot with SHA256 checksum verification.",
 )
-def trigger_backup(admin: dict = Depends(require_roles("Admin"))):
+def trigger_backup(admin: dict = Depends(require_roles("Director"))):
     try:
         backup = create_database_backup()
         record_audit_event(
@@ -1787,7 +1885,7 @@ def trigger_backup(admin: dict = Depends(require_roles("Admin"))):
     summary="List database backups (Admin)",
     description="Lists all database backups with metadata and verification status.",
 )
-def get_backups(admin: dict = Depends(require_roles("Admin"))):
+def get_backups(admin: dict = Depends(require_roles("Director"))):
     return list_backups()
 
 
@@ -1797,7 +1895,7 @@ def get_backups(admin: dict = Depends(require_roles("Admin"))):
     summary="Download database backup (Admin)",
     description="Downloads the verified SQLite database snapshot file directly from persistent storage.",
 )
-def download_backup_file(backup_id: str, admin: dict = Depends(require_roles("Admin"))):
+def download_backup_file(backup_id: str, admin: dict = Depends(require_roles("Director"))):
     try:
         metadata, path = get_backup_file(backup_id)
     except FileNotFoundError as exc:
@@ -1816,7 +1914,7 @@ def download_backup_file(backup_id: str, admin: dict = Depends(require_roles("Ad
     summary="Verify database backup integrity (Admin)",
     description="Executes PRAGMA integrity check and verifies core tables on the specified backup.",
 )
-def verify_backup(req: BackupVerifyRequest, admin: dict = Depends(require_roles("Admin"))):
+def verify_backup(req: BackupVerifyRequest, admin: dict = Depends(require_roles("Director"))):
     result = verify_database_backup(req.backup_id)
     record_audit_event(
         actor_user_id=admin["id"],
@@ -1836,7 +1934,7 @@ def verify_backup(req: BackupVerifyRequest, admin: dict = Depends(require_roles(
     summary="Restore database from backup (Admin)",
     description="Performs an ACID database restoration from a verified snapshot.",
 )
-def restore_backup(req: BackupRestoreRequest, admin: dict = Depends(require_roles("Admin"))):
+def restore_backup(req: BackupRestoreRequest, admin: dict = Depends(require_roles("Director"))):
     try:
         result = restore_database_backup(req.backup_id, req.target_db_path)
         record_audit_event(
@@ -1862,7 +1960,7 @@ def restore_backup(req: BackupRestoreRequest, admin: dict = Depends(require_role
     summary="Execute deployment rollback (Admin)",
     description="Executes a controlled deployment rollback restoring verified database state and recording release audit event.",
 )
-def deployment_rollback(req: DeploymentRollbackRequest, admin: dict = Depends(require_roles("Admin"))):
+def deployment_rollback(req: DeploymentRollbackRequest, admin: dict = Depends(require_roles("Director"))):
     try:
         result = execute_deployment_rollback(req.target_version, req.backup_id)
         record_audit_event(
@@ -1884,7 +1982,7 @@ def deployment_rollback(req: DeploymentRollbackRequest, admin: dict = Depends(re
     summary="Evaluate production alert rules (Admin)",
     description="Evaluates alert rules for queue backlog, failed postings, auth failures, balance anomalies, and backup freshness.",
 )
-def get_alerts(admin: dict = Depends(require_roles("Admin"))):
+def get_alerts(admin: dict = Depends(require_roles("Director"))):
     return evaluate_alert_rules()
 
 
@@ -1894,7 +1992,7 @@ def get_alerts(admin: dict = Depends(require_roles("Admin"))):
     summary="Simulate alert rule for testing (Admin)",
     description="Simulates an alerting condition (queue_backlog, failed_postings, auth_failures, anomalous_balance, backup_failures) for verification.",
 )
-def test_alert(req: AlertTestRequest, admin: dict = Depends(require_roles("Admin"))):
+def test_alert(req: AlertTestRequest, admin: dict = Depends(require_roles("Director"))):
     try:
         return simulate_alert_scenario(req.scenario)
     except ValueError as exc:
@@ -1907,7 +2005,7 @@ def test_alert(req: AlertTestRequest, admin: dict = Depends(require_roles("Admin
     summary="Acknowledge alert rule (Admin)",
     description="Acknowledges a firing alert rule, clearing it and recording an ALERT_ACKNOWLEDGED event in the audit trail.",
 )
-def acknowledge_alert_endpoint(req: AlertAcknowledgeRequest, admin: dict = Depends(require_roles("Admin"))):
+def acknowledge_alert_endpoint(req: AlertAcknowledgeRequest, admin: dict = Depends(require_roles("Director"))):
     try:
         return acknowledge_alert(req.rule_id, admin["id"])
     except ValueError as exc:
@@ -1920,7 +2018,7 @@ _CACHED_DEFAULT_DATA = None
 
 
 def check_session_access(session: dict, user: dict) -> None:
-    if user.get("role") in ("Admin", "Manager"):
+    if user.get("role") in ("Finance", "Manager"):
         return
     data = session.get("data") or {}
     owner = data.get("created_by") or session.get("created_by")
@@ -1932,7 +2030,7 @@ def check_session_access(session: dict, user: dict) -> None:
 
 
 @app.get("/api/default-data", tags=["Spreadsheet Sessions"], summary="Load default spreadsheet data")
-def get_default_data(user: dict = Depends(current_user)):
+def get_default_data(user: dict = Depends(require_roles("Finance", "Manager"))):
     global _CACHED_DEFAULT_DATA
     if _CACHED_DEFAULT_DATA is not None:
         return _CACHED_DEFAULT_DATA
@@ -1952,7 +2050,7 @@ def get_default_data(user: dict = Depends(current_user)):
 @app.post("/api/upload", tags=["Spreadsheet Sessions"], summary="Upload Excel spreadsheet")
 async def upload_excel(
     file: UploadFile = File(...),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     if not file.filename.endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported.")
@@ -1976,7 +2074,7 @@ async def upload_excel(
 @app.post("/api/recalculate", tags=["Spreadsheet Sessions"], summary="Recalculate summary metrics")
 def recalculate(
     req: RecalculateRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
@@ -1997,13 +2095,13 @@ def recalculate(
 # ─── Session CRUD ─────────────────────────────────────────────────────────────
 
 @app.get("/api/sessions", tags=["Spreadsheet Sessions"], summary="List spreadsheet sessions")
-def api_list_sessions(user: dict = Depends(current_user)):
+def api_list_sessions(user: dict = Depends(require_roles("Finance", "Manager"))):
     """Return all sessions (metadata only, filtered by role)."""
     return list_sessions(user_id=user["id"], role=user["role"])
 
 
 @app.get("/api/project-categories", tags=["Spreadsheet Sessions"], summary="List session categories")
-def api_list_project_categories(user: dict = Depends(current_user)):
+def api_list_project_categories(user: dict = Depends(require_roles("Finance", "Manager"))):
     return list_project_categories()
 
 
@@ -2014,7 +2112,7 @@ class ProjectCategoryRequest(BaseModel):
 @app.post("/api/project-categories", tags=["Spreadsheet Sessions"], summary="Add session category")
 def api_add_project_category(
     req: ProjectCategoryRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     name = req.name.strip()
     if not name:
@@ -2025,7 +2123,7 @@ def api_add_project_category(
 @app.post("/api/sessions", tags=["Spreadsheet Sessions"], summary="Save spreadsheet session")
 def api_create_session(
     req: SaveSessionRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     """Create a new saved session from current state."""
     try:
@@ -2072,7 +2170,7 @@ def api_create_session(
 def api_get_session(
     session_id: str,
     include_raw: bool = False,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     """Load a session's full data (transactions + summary). Excludes heavy source excel base64 unless requested."""
     session = get_session(session_id)
@@ -2098,7 +2196,7 @@ def api_get_session(
 @app.get("/api/sessions/{session_id}/zip", tags=["Spreadsheet Sessions"], summary="Export spreadsheet session as ZIP bundle")
 def api_export_session_zip(
     session_id: str,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     """Export spreadsheet session as a complete ZIP bundle containing the styled workbook,
     offline HTML evidence viewer, and all attached voucher documents."""
@@ -2134,7 +2232,7 @@ def api_export_session_zip(
 def api_update_session(
     session_id: str,
     req: SaveSessionRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     """Save/overwrite an existing session with new state."""
     existing = get_session(session_id)
@@ -2182,7 +2280,7 @@ def api_update_session(
 def api_rename_session(
     session_id: str,
     req: RenameSessionRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     """Rename a session without changing its data."""
     existing = get_session(session_id)
@@ -2196,7 +2294,7 @@ def api_rename_session(
 @app.delete("/api/sessions/{session_id}", tags=["Spreadsheet Sessions"], summary="Delete spreadsheet session")
 def api_delete_session(
     session_id: str,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     """Permanently delete a session."""
     existing = get_session(session_id)
@@ -2213,7 +2311,7 @@ def api_delete_session(
 @app.post("/api/export-drilldown", tags=["Spreadsheet Sessions"], summary="Export drilldown Excel")
 def export_drilldown(
     req: DrilldownExportRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
@@ -2236,7 +2334,7 @@ def export_drilldown(
 @app.post("/api/export", tags=["Spreadsheet Sessions"], summary="Export styled Excel")
 def export_excel(
     req: RecalculateRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     try:
         tx_dicts = [tx.model_dump() for tx in req.transactions]
@@ -2262,7 +2360,7 @@ def export_excel(
 @app.post("/api/export-zip", tags=["Spreadsheet Sessions"], summary="Export spreadsheet state as ZIP bundle")
 def export_state_zip(
     req: SaveSessionRequest,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_roles("Finance", "Manager")),
 ):
     """Export current on-screen spreadsheet state as a complete ZIP bundle."""
     try:

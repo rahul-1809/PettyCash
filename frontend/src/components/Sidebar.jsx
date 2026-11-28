@@ -27,14 +27,25 @@ export default function Sidebar({
   onClose,
   badges = {},
 }) {
-  const adminNav = [
+  const directorNav = [
     { id: 'admin_dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'admin_reports', label: 'Reports & ZIP Exports', icon: FileSpreadsheet },
+    { id: 'admin_users', label: 'Users & Access', icon: Users },
+    { id: 'admin_operations', label: 'Operations & Monitoring', icon: Activity },
+    { id: 'admin_audit', label: 'Audit Trail', icon: History },
+    { id: 'notifications', label: 'Notifications', icon: Bell, badge: badges.unreadNotifications },
+    { id: 'profile', label: 'Profile & Security', icon: UserCog },
+  ];
+
+  const financeNav = [
+    { id: 'admin_dashboard', label: 'Dashboard & Analytics', icon: LayoutDashboard },
     {
       id: 'admin_postings',
       label: 'Requests for Posting',
       icon: FileCheck2,
       badge: badges.pendingPostings,
     },
+    { id: 'finance_direct_expense', label: 'Direct Company Expense', icon: PlusCircle },
     { id: 'admin_receipts', label: 'Company Receipts', icon: Receipt },
     { id: 'admin_reports', label: 'Reports & ZIP Exports', icon: FileSpreadsheet },
     {
@@ -42,21 +53,23 @@ export default function Sidebar({
       label: 'Projects, Ledgers & Vault',
       icon: FolderTree,
     },
-    { id: 'admin_users', label: 'Users & Access', icon: Users },
-    { id: 'admin_operations', label: 'Operations & Monitoring', icon: Activity },
-    { id: 'admin_audit', label: 'Audit Trail', icon: History },
+    { id: 'finance_assignments', label: 'Hierarchy Assignments', icon: Users },
     { id: 'notifications', label: 'Notifications', icon: Bell, badge: badges.unreadNotifications },
+    { id: 'profile', label: 'Profile & Security', icon: UserCog },
     { id: 'spreadsheet_tool', label: 'Spreadsheet Utility', icon: FileText },
   ];
 
   const managerNav = [
     { id: 'manager_dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'manager_new_request', label: 'New Request', icon: PlusCircle },
+    { id: 'manager_my_requests', label: 'My Requests', icon: Send },
     {
       id: 'manager_approvals',
       label: 'Approval Queue',
       icon: FileCheck2,
       badge: badges.pendingApprovals,
     },
+    { id: 'manager_reports', label: 'Reports & ZIP Exports', icon: FileSpreadsheet },
     {
       id: 'manager_assignments',
       label: 'Assignments',
@@ -65,7 +78,7 @@ export default function Sidebar({
     },
     { id: 'manager_history', label: 'Decision History', icon: History },
     { id: 'notifications', label: 'Notifications', icon: Bell, badge: badges.unreadNotifications },
-    { id: 'profile', label: 'Profile & Alerts', icon: UserCheck },
+    { id: 'profile', label: 'Profile & Security', icon: UserCheck },
     { id: 'spreadsheet_tool', label: 'Spreadsheet Utility', icon: FileText },
   ];
 
@@ -87,12 +100,14 @@ export default function Sidebar({
     { id: 'employee_history', label: 'Request History', icon: History },
     { id: 'employee_managers', label: 'Assigned Managers', icon: UserCheck },
     { id: 'notifications', label: 'Notifications', icon: Bell, badge: badges.unreadNotifications },
-    { id: 'profile', label: 'Profile & Alerts', icon: UserCog },
+    { id: 'profile', label: 'Profile & Security', icon: UserCog },
   ];
 
   const items =
-    role === 'Admin'
-      ? adminNav
+    role === 'Director' || role === 'Admin'
+      ? directorNav
+      : role === 'Finance'
+      ? financeNav
       : role === 'Manager'
       ? managerNav
       : employeeNav;

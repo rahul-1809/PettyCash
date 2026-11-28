@@ -16,11 +16,14 @@ class Phase6Tests(unittest.TestCase):
         database.DB_PATH = str(Path(self.temp_dir.name) / "phase6.sqlite")
         database.DATABASE_URL = None
         database.init_db()
-        self.admin = create_bootstrap_admin(
+        self.director = create_bootstrap_admin(
             "admin", "admin@example.com", "a-secure-password"
         )
+        self.admin, _ = provision_user(
+            "finance", "finance@example.com", "Finance", self.director["id"]
+        )
         self.manager, _ = provision_user(
-            "manager", "manager@example.com", "Manager", self.admin["id"]
+            "manager", "manager@example.com", "Manager", self.director["id"]
         )
         self.project = create_master_record("projects", "Office")
         self.ledger = create_master_record("ledgers", "Petty Cash")

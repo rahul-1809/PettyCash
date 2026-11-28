@@ -274,3 +274,52 @@ def set_password_with_token(raw_token: str, password: str) -> dict:
     clear_auth_cache()
     return {"user_id": row["user_id"]}
 
+
+def change_password(user_id: str, current_password: str, new_password: str, current_token: Optional[str] = None) -> dict:
+    """Allows an authenticated user to change their own password after verifying the current password."""
+    if not current_password or not new_password:
+        raise ValueError("Both current password and new password are required.")
+    if current_password == new_password:
+        raise ValueError("New password must be different from your current password.")
+
+    new_hash = hash_password(new_password)
+    marker = database._placeholder()
+    with database.get_connection() as connection:
+        row = connection.execute(
+            f"SELECT id, password_hash, is_active FROM users WHERE id={marker}",
+            (user_id,),
+        ).fetchone()
+        if not row or row["is_active"] != 1:
+            raise LookupError("Active user account not found.")
+        if not row["password_hash"] or not verify_password(current_password, row["password_hash"]):
+            raise ValueError("Current password is incorrect.")
+
+        timestamp = database.now_iso()
+        connection.execute(
+            f"UPDATE users SET password_hash={marker}, updated_at={marker} WHERE id={marker}",
+            (new_hash, timestamp, user_id),
+        )
+        # Revoke other sessions while preserving the active session if provided
+        if current_token:
+            curr_th = hash_token(current_token)
+            connection.execute(
+                f"UPDATE user_sessions SET revoked_at={marker} WHERE user_id={marker} AND token_hash != {marker} AND revoked_at IS NULL",
+                (timestamp, user_id, curr_th),
+            )
+        else:
+            connection.execute(
+                f"UPDATE user_sessions SET revoked_at={marker} WHERE user_id={marker} AND revoked_at IS NULL",
+                (timestamp, user_id),
+            )
+        record_audit_event(
+            connection=connection,
+            actor_user_id=user_id,
+            action="AUTH_PASSWORD_CHANGED",
+            entity_type="user",
+            entity_id=user_id,
+            after={"user_id": user_id},
+        )
+        connection.commit()
+    clear_auth_cache()
+    return {"status": "password_updated"}
+

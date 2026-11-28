@@ -39,12 +39,16 @@ import {
   Calendar,
   IndianRupee,
   X,
+  FileUp,
 } from 'lucide-react';
 import { api } from '../api';
 import Modal from '../components/Modal';
 import TablePagination from '../components/TablePagination';
+import FinanceCharts from '../components/FinanceCharts';
 
 export default function AdminViews({ currentView, onNavigate, addToast, user }) {
+  const isDirector = user?.role === 'Director' || user?.role === 'Admin';
+  const isFinance = user?.role === 'Finance';
   const [loading, setLoading] = useState(false);
 
   // Data states
@@ -91,6 +95,28 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
   const [errorsPage, setErrorsPage] = useState(1);
   const [errorsPageSize, setErrorsPageSize] = useState(10);
   const [userFilterStatus, setUserFilterStatus] = useState('ALL'); // 'ALL' | 'ACTIVE' | 'DEACTIVATED'
+  const [financeAssignments, setFinanceAssignments] = useState([]);
+  const [finAssignFinanceId, setFinAssignFinanceId] = useState('');
+  const [finAssignManagerId, setFinAssignManagerId] = useState('');
+  const [finAssignPage, setFinAssignPage] = useState(1);
+  const [finAssignPageSize, setFinAssignPageSize] = useState(10);
+  const [mgrAssignPage, setMgrAssignPage] = useState(1);
+  const [mgrAssignPageSize, setMgrAssignPageSize] = useState(10);
+
+  // Finance Direct Expense state
+  const [directExpDate, setDirectExpDate] = useState(new Date().toISOString().split('T')[0]);
+  const [directExpAmount, setDirectExpAmount] = useState('');
+  const [directExpProject, setDirectExpProject] = useState('');
+  const [directExpLedger, setDirectExpLedger] = useState('');
+  const [directExpCategory, setDirectExpCategory] = useState('');
+  const [directExpPurpose, setDirectExpPurpose] = useState('');
+  const [directExpNotes, setDirectExpNotes] = useState('');
+  const [directExpensesList, setDirectExpensesList] = useState([]);
+  const [directExpPage, setDirectExpPage] = useState(1);
+  const [directExpPageSize, setDirectExpPageSize] = useState(10);
+  const [finVoucherModalOpen, setFinVoucherModalOpen] = useState(false);
+  const [finVoucherReq, setFinVoucherReq] = useState(null);
+  const [finVoucherFile, setFinVoucherFile] = useState(null);
 
   // Modals state
   const [provisionModalOpen, setProvisionModalOpen] = useState(false);
@@ -170,18 +196,22 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
 
       const promises = [];
 
-      // 1. Core balance: needed in dashboard, reports, catalog, postings, receipts
-      if (['admin_dashboard', 'admin_reports', 'admin_postings', 'admin_receipts', 'admin_catalog', 'admin_operations'].includes(currentView)) {
+      // 1. Core balance: needed in Finance dashboard, reports, catalog, postings, receipts
+      if (
+        (currentView === 'admin_dashboard' && isFinance) ||
+        ['admin_reports', 'admin_postings', 'admin_receipts', 'admin_catalog', 'finance_direct_expense'].includes(currentView)
+      ) {
         promises.push(api.getCashBalance().then(d => setCashBalance(d)).catch(() => null));
       }
 
-      // 2. Projects & Ledgers: needed in postings, receipts, catalog, reports
-      if (['admin_postings', 'admin_receipts', 'admin_catalog', 'admin_reports'].includes(currentView)) {
+      // 2. Projects & Ledgers: needed in postings, receipts, catalog, reports, direct expense
+      if (['admin_postings', 'admin_receipts', 'admin_catalog', 'admin_reports', 'finance_direct_expense'].includes(currentView)) {
         promises.push(
           api.getProjects().then(d => {
             const list = d || [];
             setProjects(list);
             if (list.length > 0 && !receiptProjectId) setReceiptProjectId(list[0].id);
+            if (list.length > 0 && !directExpProject) setDirectExpProject(list[0].id);
           }).catch(() => [])
         );
         promises.push(
@@ -189,42 +219,48 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             const list = d || [];
             setLedgers(list);
             if (list.length > 0 && !receiptLedgerId) setReceiptLedgerId(list[0].id);
+            if (list.length > 0 && !directExpLedger) setDirectExpLedger(list[0].id);
           }).catch(() => [])
         );
       }
 
-      // 3. Requests / Postings Queue: needed in dashboard & postings
-      if (['admin_dashboard', 'admin_postings'].includes(currentView)) {
+      // 3. Requests / Postings Queue: needed in Finance dashboard, postings, direct expense
+      if ((currentView === 'admin_dashboard' && isFinance) || ['admin_postings', 'finance_direct_expense'].includes(currentView)) {
         promises.push(
           api.listRequests().then(reqData => {
+            const allReqs = reqData || [];
             setPostingsQueue(
-              (reqData || []).filter(
-                (r) => r.status === 'SUPPORTING_UPLOADED' || (r.status === 'APPROVED' && r.supporting_files?.length > 0)
+              allReqs.filter(
+                (r) => r.status === 'APPROVED' || r.status === 'SUPPORTING_UPLOADED'
               )
             );
+            setDirectExpensesList(allReqs.filter((r) => r.request_type === 'FINANCE_DIRECT'));
           }).catch(() => [])
         );
       }
 
-      // 4. Company Receipts: needed in dashboard (count) & receipts
-      if (['admin_dashboard', 'admin_receipts'].includes(currentView)) {
+      // 4. Company Receipts: needed in Finance dashboard & receipts
+      if ((currentView === 'admin_dashboard' && isFinance) || currentView === 'admin_receipts') {
         promises.push(api.listCompanyReceipts().then(d => setReceipts(d || [])).catch(() => []));
       }
 
-      // 5. Alerts: needed in dashboard & operations
-      if (['admin_dashboard', 'admin_operations'].includes(currentView)) {
+      // 5. Alerts: needed in Director dashboard & operations
+      if ((currentView === 'admin_dashboard' && isDirector) || currentView === 'admin_operations') {
         promises.push(api.getAlerts().then(d => setAlerts(d?.alerts || [])).catch(() => ({ alerts: [] })));
       }
 
-      // 6. Reports: needed in admin_reports (RUNS IMMEDIATELY IN PARALLEL!)
-      if (currentView === 'admin_reports') {
+      // 6. Reports & Charts: needed in admin_reports & Finance dashboard
+      if (currentView === 'admin_reports' || (currentView === 'admin_dashboard' && isFinance)) {
         promises.push(api.getMonthlyReport(reportMonth).then(d => setMonthlyReport(d)).catch(() => null));
       }
 
-      // 7. Users & Assignments: needed in admin_users
-      if (currentView === 'admin_users') {
+      // 7. Users & Assignments: needed in admin_users, director dashboard, & finance_assignments
+      if (['admin_users', 'finance_assignments'].includes(currentView) || (currentView === 'admin_dashboard' && isDirector)) {
         promises.push(api.listUsers().then(d => setUsersList(d || [])).catch(() => []));
+      }
+      if (currentView === 'finance_assignments') {
         promises.push(api.listAssignments().then(d => setAssignments(d || [])).catch(() => []));
+        promises.push(api.listFinanceAssignments().then(d => setFinanceAssignments(d || [])).catch(() => []));
       }
 
       // 8. Catalog: Periods & Adjustments: needed in admin_catalog
@@ -331,6 +367,91 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
       loadData();
     } catch (err) {
       addToast({ type: 'error', message: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateDirectExpense = async (e) => {
+    e.preventDefault();
+    try {
+      setIsSubmitting(true);
+      await api.createFinanceDirectExpense({
+        project_id: directExpProject,
+        ledger_id: directExpLedger,
+        category: directExpCategory.trim(),
+        effective_date: directExpDate,
+        amount: parseFloat(directExpAmount),
+        purpose: directExpPurpose.trim(),
+        notes: directExpNotes.trim() || null,
+      });
+      addToast({
+        type: 'success',
+        title: 'Direct Expense Posted',
+        message: 'Company expenditure recorded and posted directly to the ledger.',
+      });
+      setDirectExpAmount('');
+      setDirectExpCategory('');
+      setDirectExpPurpose('');
+      setDirectExpNotes('');
+      api.clearCache();
+      loadData(true);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Direct Expense Failed', message: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateFinanceAssignment = async (e) => {
+    e.preventDefault();
+    if (!finAssignFinanceId || !finAssignManagerId) return;
+    try {
+      setIsSubmitting(true);
+      await api.createFinanceAssignment(finAssignFinanceId, finAssignManagerId);
+      addToast({
+        type: 'success',
+        title: 'Hierarchy Updated',
+        message: 'Manager successfully assigned to Finance user.',
+      });
+      setFinAssignFinanceId('');
+      setFinAssignManagerId('');
+      loadData(true);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Assignment Failed', message: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteFinanceAssignment = async (id) => {
+    if (!window.confirm('Remove this Finance–Manager assignment?')) return;
+    try {
+      await api.deleteFinanceAssignment(id);
+      addToast({ type: 'success', title: 'Removed', message: 'Finance assignment removed.' });
+      loadData(true);
+    } catch (err) {
+      addToast({ type: 'error', message: err.message });
+    }
+  };
+
+  const handleUploadFinanceVoucher = async (e) => {
+    e.preventDefault();
+    if (!finVoucherFile || !finVoucherReq) return;
+    try {
+      setIsSubmitting(true);
+      await api.uploadSupportingFile(finVoucherReq.id, finVoucherFile);
+      addToast({
+        type: 'success',
+        title: 'Voucher Uploaded',
+        message: 'Supporting voucher attached and reflected in reports.',
+      });
+      setFinVoucherModalOpen(false);
+      setFinVoucherFile(null);
+      api.clearCache();
+      loadData(true);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Upload Failed', message: err.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -938,16 +1059,60 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
   return (
     <div className="space-y-6">
       {/* ── View: Dashboard */}
-      {currentView === 'admin_dashboard' && (
+      {currentView === 'admin_dashboard' && isDirector && (
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800 pb-4">
             <div>
-              <h1 className="text-xl font-bold text-slate-100">Administrator Command Center</h1>
+              <h1 className="text-xl font-bold text-slate-100">Director Governance Center</h1>
               <p className="text-xs text-slate-400 mt-1">
-                Financial controls, canonical ledger postings, vault balance, and operational health.
+                User access management, system health monitoring, immutable audit trail, and view-only financial reports.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('admin_reports')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-semibold cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" /> View Reports & Exports
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div onClick={() => onNavigate('admin_users')} className="p-5 bg-slate-900 border border-slate-800 rounded-lg cursor-pointer hover:border-slate-700">
+              <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Organization Users</div>
+              <div className="text-2xl font-extrabold text-emerald-400">{usersList.length}</div>
+              <div className="text-[11px] text-slate-400 mt-1">Active: {usersList.filter((u) => u.is_active !== 0).length}</div>
+            </div>
+            <div onClick={() => onNavigate('admin_operations')} className="p-5 bg-slate-900 border border-slate-800 rounded-lg cursor-pointer hover:border-slate-700">
+              <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Operational Alerts</div>
+              <div className="text-2xl font-extrabold text-slate-100">{alerts.filter((a) => a.status === 'FIRING').length} Firing</div>
+              <div className="text-[11px] text-slate-400 mt-1">System health & backup status</div>
+            </div>
+            <div onClick={() => onNavigate('admin_audit')} className="p-5 bg-slate-900 border border-slate-800 rounded-lg cursor-pointer hover:border-slate-700">
+              <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Audit & Compliance</div>
+              <div className="text-2xl font-extrabold text-amber-400">Active</div>
+              <div className="text-[11px] text-slate-400 mt-1">Inspect immutable activity logs</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {currentView === 'admin_dashboard' && isFinance && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <h1 className="text-xl font-bold text-slate-100">Finance Dashboard & Analytics</h1>
+              <p className="text-xs text-slate-400 mt-1">
+                Canonical ledger postings, vault balance, expenditure charts, and hierarchy controls.
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onNavigate('finance_direct_expense')}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 text-xs font-semibold cursor-pointer"
+              >
+                <PlusCircle className="w-3.5 h-3.5" /> Direct Expense
+              </button>
               <button
                 type="button"
                 onClick={() => setReceiptModalOpen(true)}
@@ -1071,6 +1236,9 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
               </div>
             )}
           </div>
+
+          {/* Finance Analytics Charts */}
+          <FinanceCharts monthlyReport={monthlyReport} />
         </div>
       )}
 
@@ -1081,17 +1249,10 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             <div>
               <h1 className="text-lg font-bold text-slate-100">Users & Access Management</h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Provision role accounts (Admin, Manager, Employee) and configure review assignments.
+                Provision role accounts (Director, Finance, Manager, Employee) and manage account lifecycle.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setAssignmentModalOpen(true)}
-                className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
-              >
-                Assign Employee
-              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1259,11 +1420,135 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
             </table>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Assignments Table */}
+      {/* ── View: Finance Hierarchy Assignments */}
+      {currentView === 'finance_assignments' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-3">
+            <div>
+              <h1 className="text-lg font-bold text-slate-100">Organization Hierarchy Assignments</h1>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Assign Finance users to Managers and Managers to Employees.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAssignmentModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold cursor-pointer"
+            >
+              <PlusCircle className="w-3.5 h-3.5" /> Assign Employee to Manager
+            </button>
+          </div>
+
+          {/* Assign Finance User to Manager Form */}
+          <form onSubmit={handleCreateFinanceAssignment} className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4 text-xs shadow-sm">
+            <h2 className="text-xs font-semibold text-slate-200 uppercase tracking-wider">
+              Assign Finance User to Manager
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Finance User *</label>
+                <select
+                  value={finAssignFinanceId}
+                  onChange={(e) => setFinAssignFinanceId(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100"
+                  required
+                >
+                  <option value="">-- Select Finance User --</option>
+                  {usersList
+                    .filter((u) => u.is_active !== 0 && u.role === 'Finance')
+                    .map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.username} ({f.email})
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Manager *</label>
+                <select
+                  value={finAssignManagerId}
+                  onChange={(e) => setFinAssignManagerId(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100"
+                  required
+                >
+                  <option value="">-- Select Manager --</option>
+                  {usersList
+                    .filter((u) => u.is_active !== 0 && u.role === 'Manager')
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.username} ({m.email})
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold cursor-pointer disabled:opacity-50"
+              >
+                Assign Finance ↔ Manager
+              </button>
+            </div>
+          </form>
+
+          {/* Finance-to-Manager Table */}
           <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
             <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 text-xs font-semibold text-slate-300">
-              Manager-to-Employee Review Hierarchy
+              Finance-to-Manager Assignments ({financeAssignments.length})
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
+                <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="p-3">Finance User</th>
+                    <th className="p-3">Assigned Manager</th>
+                    <th className="p-3">Assigned Date</th>
+                    <th className="p-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {financeAssignments.length === 0 ? (
+                    <tr><td colSpan={4} className="p-6 text-center text-slate-500">No Finance–Manager assignments configured.</td></tr>
+                  ) : (
+                    financeAssignments
+                      .slice((finAssignPage - 1) * finAssignPageSize, finAssignPage * finAssignPageSize)
+                      .map((fa) => (
+                        <tr key={fa.id} className="hover:bg-slate-800/40">
+                          <td className="p-3 font-medium text-cyan-300">{fa.finance_username} ({fa.finance_email})</td>
+                          <td className="p-3 font-medium text-purple-300">{fa.manager_username} ({fa.manager_email})</td>
+                          <td className="p-3 text-slate-400">{fa.created_at?.split('T')[0] || '—'}</td>
+                          <td className="p-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteFinanceAssignment(fa.id)}
+                              className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer"
+                              title="Remove assignment"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <TablePagination
+              totalItems={financeAssignments.length}
+              currentPage={finAssignPage}
+              pageSize={finAssignPageSize}
+              onPageChange={setFinAssignPage}
+              onPageSizeChange={(s) => { setFinAssignPageSize(s); setFinAssignPage(1); }}
+            />
+          </div>
+
+          {/* Manager-to-Employee Table */}
+          <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 text-xs font-semibold text-slate-300">
+              Manager-to-Employee Review Hierarchy ({assignments.length})
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-200">
@@ -1277,39 +1562,178 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {assignments.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="p-6 text-center text-slate-500">
-                        No assignments configured.
-                      </td>
-                    </tr>
+                    <tr><td colSpan={4} className="p-6 text-center text-slate-500">No assignments configured.</td></tr>
                   ) : (
-                    assignments.map((a) => (
-                      <tr key={a.id} className="hover:bg-slate-800/40">
-                        <td className="p-3 font-medium text-purple-300">
-                          {a.manager_username || a.manager_email || a.manager_id}
-                        </td>
-                        <td className="p-3 font-medium text-emerald-300">
-                          {a.employee_username || a.employee_email || a.employee_id}
-                        </td>
-                        <td className="p-3 text-slate-400">{a.assigned_at?.split('T')[0] || a.created_at?.split('T')[0] || '—'}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            a.status === 'APPROVED'
-                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                              : a.status === 'PENDING'
-                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                              : 'bg-rose-950 text-rose-300 border border-rose-800'
-                          }`}>
-                            {a.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                    assignments
+                      .slice((mgrAssignPage - 1) * mgrAssignPageSize, mgrAssignPage * mgrAssignPageSize)
+                      .map((a) => (
+                        <tr key={a.id} className="hover:bg-slate-800/40">
+                          <td className="p-3 font-medium text-purple-300">{a.manager_username || a.manager_email || a.manager_id}</td>
+                          <td className="p-3 font-medium text-emerald-300">{a.employee_username || a.employee_email || a.employee_id}</td>
+                          <td className="p-3 text-slate-400">{a.assigned_at?.split('T')[0] || a.created_at?.split('T')[0] || '—'}</td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              a.status === 'APPROVED'
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                : a.status === 'PENDING'
+                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                : 'bg-rose-950 text-rose-300 border border-rose-800'
+                            }`}>
+                              {a.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
                   )}
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              totalItems={assignments.length}
+              currentPage={mgrAssignPage}
+              pageSize={mgrAssignPageSize}
+              onPageChange={setMgrAssignPage}
+              onPageSizeChange={(s) => { setMgrAssignPageSize(s); setMgrAssignPage(1); }}
+            />
           </div>
+        </div>
+      )}
+
+      {/* ── View: Finance Direct Company Expense */}
+      {currentView === 'finance_direct_expense' && (
+        <div className="space-y-6">
+          <div className="border-b border-slate-800 pb-3">
+            <h1 className="text-lg font-bold text-slate-100">Direct Company Expense</h1>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Record company expenditure directly into the posted ledger without requiring prior approval. Vouchers can be uploaded anytime.
+            </p>
+          </div>
+
+          <form onSubmit={handleCreateDirectExpense} className="bg-slate-900 border border-slate-800 rounded-lg p-6 space-y-4 text-xs shadow-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Effective Date *</label>
+                <input type="date" value={directExpDate} onChange={(e) => setDirectExpDate(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Amount (₹) *</label>
+                <input type="number" step="0.01" min="0.01" value={directExpAmount} onChange={(e) => setDirectExpAmount(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Category *</label>
+                <input type="text" value={directExpCategory} onChange={(e) => setDirectExpCategory(e.target.value)} placeholder="e.g. Office Supplies, Travel" className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Project *</label>
+                <select value={directExpProject} onChange={(e) => setDirectExpProject(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required>
+                  {projects.filter((p) => p.is_active).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Ledger *</label>
+                <select value={directExpLedger} onChange={(e) => setDirectExpLedger(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required>
+                  {ledgers.filter((l) => l.is_active).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">Purpose *</label>
+              <input type="text" maxLength={500} value={directExpPurpose} onChange={(e) => setDirectExpPurpose(e.target.value)} placeholder="Description of expense" className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" required />
+            </div>
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">Notes (Optional)</label>
+              <input type="text" maxLength={2000} value={directExpNotes} onChange={(e) => setDirectExpNotes(e.target.value)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-slate-100" />
+            </div>
+            <div className="flex justify-end">
+              <button type="submit" disabled={isSubmitting} className="inline-flex items-center gap-1.5 px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold cursor-pointer disabled:opacity-50">
+                <PlusCircle className="w-3.5 h-3.5" /> {isSubmitting ? 'Posting...' : 'Post Direct Expense'}
+              </button>
+            </div>
+          </form>
+
+          {/* Direct Expenses History */}
+          <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-sm">
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 text-xs font-semibold text-slate-300">
+              Posted Direct Expenses ({directExpensesList.length})
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-200">
+                <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Purpose</th>
+                    <th className="p-3">Project / Category</th>
+                    <th className="p-3">Amount</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3 text-right">Voucher</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {directExpensesList.length === 0 ? (
+                    <tr><td colSpan={6} className="p-6 text-center text-slate-500">No direct expenses recorded yet.</td></tr>
+                  ) : (
+                    directExpensesList
+                      .slice((directExpPage - 1) * directExpPageSize, directExpPage * directExpPageSize)
+                      .map((d) => (
+                        <tr key={d.id} className="hover:bg-slate-800/40">
+                          <td className="p-3 font-mono">{d.request_date}</td>
+                          <td className="p-3 font-medium text-slate-100">{d.purpose}</td>
+                          <td className="p-3 text-slate-400">{d.project_name} / {d.category_name}</td>
+                          <td className="p-3 font-bold text-slate-100">₹{parseFloat(d.amount).toFixed(2)}</td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${d.supporting_count > 0 ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-amber-950 text-amber-300 border-amber-800'}`}>
+                              {d.supporting_count > 0 ? 'Posted (Voucher Attached)' : 'Posted (Voucher Pending)'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => { setFinVoucherReq(d); setFinVoucherFile(null); setFinVoucherModalOpen(true); }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 text-[11px] font-semibold border border-slate-700 cursor-pointer"
+                            >
+                              <FileUp className="w-3 h-3" /> {d.supporting_count > 0 ? 'Add Voucher' : 'Upload Voucher'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <TablePagination
+              totalItems={directExpensesList.length}
+              currentPage={directExpPage}
+              pageSize={directExpPageSize}
+              onPageChange={setDirectExpPage}
+              onPageSizeChange={(s) => { setDirectExpPageSize(s); setDirectExpPage(1); }}
+            />
+          </div>
+
+          <Modal
+            isOpen={finVoucherModalOpen}
+            onClose={() => setFinVoucherModalOpen(false)}
+            title="Upload Supporting Voucher"
+            size="sm"
+          >
+            <form onSubmit={handleUploadFinanceVoucher} className="space-y-4 text-xs">
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded">
+                <div className="text-slate-400">Expense: <strong className="text-slate-100">{finVoucherReq?.purpose}</strong></div>
+                <div className="text-slate-400 mt-0.5">Amount: <strong className="text-emerald-400">₹{parseFloat(finVoucherReq?.amount || 0).toFixed(2)}</strong></div>
+              </div>
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Voucher File (PDF, PNG, JPG) *</label>
+                <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setFinVoucherFile(e.target.files?.[0] || null)} className="w-full text-slate-300" required />
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button type="button" onClick={() => setFinVoucherModalOpen(false)} className="px-3 py-1.5 rounded bg-slate-800 text-slate-300">Cancel</button>
+                <button type="submit" disabled={isSubmitting || !finVoucherFile} className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold disabled:opacity-50">
+                  {isSubmitting ? 'Uploading...' : 'Upload Voucher'}
+                </button>
+              </div>
+            </form>
+          </Modal>
         </div>
       )}
 
@@ -2205,6 +2629,7 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
           {/* TAB 3: Visual Analytics */}
           {reportActiveTab === 'analytics' && monthlyReport && (
             <div className="space-y-6">
+              <FinanceCharts monthlyReport={monthlyReport} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {/* Spending by Project */}
                 <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-sm space-y-4">
@@ -2962,8 +3387,9 @@ export default function AdminViews({ currentView, onNavigate, addToast, user }) 
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               >
                 <option value="Employee">Employee (Submit Requests)</option>
-                <option value="Manager">Manager (Approve Submissions)</option>
-                <option value="Admin">Admin (Post to Ledger & Manage)</option>
+                <option value="Manager">Manager (Approve & Request)</option>
+                <option value="Finance">Finance (Post, Receipts & Hierarchy)</option>
+                <option value="Director">Director (Governance & View Reports)</option>
               </select>
             </div>
             <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">

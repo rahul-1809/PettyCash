@@ -45,7 +45,7 @@ class Phase2And3Tests(unittest.TestCase):
             "ADMIN@example.com",
             "a-secure-password",
         )
-        self.assertEqual(admin["role"], "Admin")
+        self.assertEqual(admin["role"], "Director")
         self.assertIsNone(authenticate_user("admin@example.com", "wrong-password"))
 
         user, onboarding_token = provision_user(

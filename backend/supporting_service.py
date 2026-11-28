@@ -87,8 +87,8 @@ def upload_supporting_file(
             raise LookupError("Request not found.")
         if request["requester_id"] != uploader_id:
             raise PermissionError("Only the requester can upload supporting files.")
-        if request["status"] not in {"APPROVED", "SUPPORTING_UPLOADED"}:
-            raise ValueError("Supporting files can only be uploaded after approval.")
+        if request["status"] not in {"APPROVED", "SUPPORTING_UPLOADED", "POSTED"}:
+            raise ValueError("Supporting files can only be uploaded after approval or posting.")
         timestamp = database.now_iso()
         path.write_bytes(content)
         b64_content = base64.b64encode(content).decode("ascii")
@@ -156,27 +156,34 @@ def upload_supporting_file(
             raise
 
     try:
+        try:
+            from backend.report_service import invalidate_report_cache
+        except ImportError:
+            from report_service import invalidate_report_cache
+        invalidate_report_cache()
+    except Exception:
+        pass
+
+    try:
         with database.get_connection() as conn:
-            admins = conn.execute(
-                "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.name='Admin' AND u.is_active=1"
-            ).fetchall()
+            req_info = conn.execute(
+                f"SELECT amount, purpose, assigned_finance_id FROM petty_cash_requests WHERE id={database._placeholder()}",
+                (request_id,),
+            ).fetchone()
             emp = conn.execute(
                 f"SELECT username FROM users WHERE id={database._placeholder()}",
                 (uploader_id,),
             ).fetchone()
-            req_info = conn.execute(
-                f"SELECT amount, purpose FROM petty_cash_requests WHERE id={database._placeholder()}",
-                (request_id,),
-            ).fetchone()
-        emp_name = emp["username"] if emp else "Employee"
+        emp_name = emp["username"] if emp else "User"
         amt_str = f"₹{req_info['amount']}" if req_info else ""
         purpose_str = req_info["purpose"] if req_info else "Petty cash request"
-        for adm in admins:
+        fin_id = req_info["assigned_finance_id"] if req_info else None
+        if fin_id and fin_id != uploader_id:
             create_notification(
-                adm["id"],
-                "REQUEST_READY_FOR_POSTING",
+                fin_id,
+                "VOUCHER_UPLOADED",
                 f"Voucher uploaded by {emp_name}",
-                f"Request for {amt_str} ({purpose_str}) by {emp_name} has supporting voucher '{original_filename}' attached and is ready for posting.",
+                f"Supporting voucher '{original_filename}' was attached by {emp_name} for {amt_str} ({purpose_str}).",
                 "petty_cash_request",
                 request_id,
             )
@@ -232,7 +239,7 @@ def get_supporting_file(
     # 2. Requester can access their own file.
     # 3. For public/report hyperlinks (e.g. clicked from downloaded Excel report):
     #    allow access if the request is in an approved or posted state (audit evidence).
-    is_admin = (role == "Admin")
+    is_admin = role in ("Admin", "Director", "Finance")
     is_owner = (requester_id is not None and row["requester_id"] == requester_id)
     is_posted_or_approved = (row["request_status"] in ("POSTED", "APPROVED", "SUPPORTING_UPLOADED"))
 

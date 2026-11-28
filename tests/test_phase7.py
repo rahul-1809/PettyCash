@@ -49,9 +49,10 @@ class Phase7Tests(unittest.TestCase):
         database.DATABASE_URL = None
         database.init_db()
 
-        self.admin = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
-        self.manager, _ = provision_user("manager", "manager@example.com", "Manager", self.admin["id"])
-        self.employee, _ = provision_user("employee", "employee@example.com", "Employee", self.admin["id"])
+        self.director = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
+        self.admin, _ = provision_user("finance", "finance@example.com", "Finance", self.director["id"])
+        self.manager, _ = provision_user("manager", "manager@example.com", "Manager", self.director["id"])
+        self.employee, _ = provision_user("employee", "employee@example.com", "Employee", self.director["id"])
 
         assignment = create_assignment(self.manager["id"], self.employee["id"], self.admin["id"])
         review_assignment(assignment["id"], self.manager["id"], "APPROVED")
@@ -427,12 +428,15 @@ class Phase7APITests(unittest.TestCase):
         database.init_db()
 
         self.admin = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
+        self.finance, _ = provision_user("finance", "finance@example.com", "Finance", self.admin["id"])
         self.employee, _ = provision_user("employee", "employee@example.com", "Employee", self.admin["id"])
 
         self.admin_token = create_auth_session(self.admin["id"])
+        self.finance_token = create_auth_session(self.finance["id"])
         self.employee_token = create_auth_session(self.employee["id"])
 
         self.admin_headers = {"Authorization": f"Bearer {self.admin_token}"}
+        self.finance_headers = {"Authorization": f"Bearer {self.finance_token}"}
         self.employee_headers = {"Authorization": f"Bearer {self.employee_token}"}
         self.client = TestClient(app)
 
@@ -458,24 +462,24 @@ class Phase7APITests(unittest.TestCase):
         res = self.client.post(
             "/api/financial-periods",
             json={"period_start": "2026-09-01", "period_end": "2026-09-30"},
-            headers=self.admin_headers,
+            headers=self.finance_headers,
         )
         self.assertEqual(res.status_code, 200)
         period = res.json()
         self.assertEqual(period["status"], "OPEN")
 
         # 2. List periods
-        res = self.client.get("/api/financial-periods", headers=self.admin_headers)
+        res = self.client.get("/api/financial-periods", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
         self.assertGreaterEqual(len(res.json()), 1)
 
         # 3. Close period
-        res = self.client.post(f"/api/financial-periods/{period['id']}/close", headers=self.admin_headers)
+        res = self.client.post(f"/api/financial-periods/{period['id']}/close", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "CLOSED")
 
         # 4. Reopen period
-        res = self.client.post(f"/api/financial-periods/{period['id']}/reopen", headers=self.admin_headers)
+        res = self.client.post(f"/api/financial-periods/{period['id']}/reopen", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "OPEN")
 
@@ -488,14 +492,14 @@ class Phase7APITests(unittest.TestCase):
                 "reason": "Direct deposit adjustment",
                 "direction": "INFLOW",
             },
-            headers=self.admin_headers,
+            headers=self.finance_headers,
         )
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(float(data["amount"]), 200.0)
 
         # List adjustments
-        res = self.client.get("/api/cash-adjustments", headers=self.admin_headers)
+        res = self.client.get("/api/cash-adjustments", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
         self.assertGreaterEqual(len(res.json()), 1)
 
@@ -515,19 +519,19 @@ class Phase7APITests(unittest.TestCase):
         self.assertEqual(res.status_code, 403)
 
         # Import session to legacy ledger
-        res = self.client.post("/api/legacy-ledger/import-session/sess-100", headers=self.admin_headers)
+        res = self.client.post("/api/legacy-ledger/import-session/sess-100", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
         legacy_sess = res.json()
         self.assertTrue(legacy_sess["is_legacy"])
         self.assertEqual(legacy_sess["source_session_id"], "sess-100")
 
         # List legacy sessions
-        res = self.client.get("/api/legacy-ledger/sessions", headers=self.admin_headers)
+        res = self.client.get("/api/legacy-ledger/sessions", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
         self.assertGreaterEqual(len(res.json()), 1)
 
         # Get legacy session
-        res = self.client.get(f"/api/legacy-ledger/sessions/{legacy_sess['id']}", headers=self.admin_headers)
+        res = self.client.get(f"/api/legacy-ledger/sessions/{legacy_sess['id']}", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["name"], "Old Session")
 
@@ -538,13 +542,13 @@ class Phase7APITests(unittest.TestCase):
                 "name": "Renamed Legacy Session",
                 "transactions": [{"date": "2025-01-05", "ledger": "Office", "payment": 150}],
             },
-            headers=self.admin_headers,
+            headers=self.finance_headers,
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["name"], "Renamed Legacy Session")
 
         # Delete legacy session
-        res = self.client.delete(f"/api/legacy-ledger/sessions/{legacy_sess['id']}", headers=self.admin_headers)
+        res = self.client.delete(f"/api/legacy-ledger/sessions/{legacy_sess['id']}", headers=self.finance_headers)
         self.assertEqual(res.status_code, 200)
 
 

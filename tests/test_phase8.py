@@ -46,9 +46,10 @@ class Phase8Tests(unittest.TestCase):
         database.DATABASE_URL = None
         database.init_db()
 
-        self.admin = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
-        self.manager, _ = provision_user("manager", "manager@example.com", "Manager", self.admin["id"])
-        self.employee, _ = provision_user("employee", "employee@example.com", "Employee", self.admin["id"])
+        self.director = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
+        self.admin, _ = provision_user("finance", "finance@example.com", "Finance", self.director["id"])
+        self.manager, _ = provision_user("manager", "manager@example.com", "Manager", self.director["id"])
+        self.employee, _ = provision_user("employee", "employee@example.com", "Employee", self.director["id"])
 
         assignment = create_assignment(self.manager["id"], self.employee["id"], self.admin["id"])
         review_assignment(assignment["id"], self.manager["id"], "APPROVED")

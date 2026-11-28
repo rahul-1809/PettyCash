@@ -359,6 +359,12 @@ def get_monthly_report_data(month_str: str, cash_account_id: str = "system-main-
                     "project": proj_name,
                     "supportings": primary_file,
                     "all_supportings": supportings_list,
+                    "supporting_count": len(supportings_list),
+                    "voucher_status": (
+                        "Posted (Voucher Attached)"
+                        if len(supportings_list) > 0
+                        else ("Posted (Voucher Pending)" if payment_amt > 0 else "Receipt")
+                    ),
                     "notes": notes,
                 })
 

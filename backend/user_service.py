@@ -16,10 +16,16 @@ except ImportError:
 
 
 ROLE_IDS = {
+    "Director": "role-admin",
     "Admin": "role-admin",
+    "Finance": "role-finance",
     "Manager": "role-manager",
     "Employee": "role-employee",
 }
+
+
+def _normalize_role_name(role: str) -> str:
+    return "Director" if role == "Admin" else role
 
 
 def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
@@ -32,12 +38,11 @@ def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
             f"""
             SELECT u.id FROM users u
             JOIN roles r ON r.id=u.role_id
-            WHERE r.name={marker}
+            WHERE r.name IN ('Director', 'Admin')
             """,
-            ("Admin",),
         ).fetchone()
         if existing:
-            raise ValueError("An Admin account already exists.")
+            raise ValueError("A Director account already exists.")
 
         existing_user = connection.execute(
             f"SELECT username, email FROM users WHERE LOWER(username)=LOWER({marker}) OR LOWER(email)=LOWER({marker})",
@@ -61,7 +66,7 @@ def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
                 user_id,
                 normalized_username,
                 normalized_email,
-                ROLE_IDS["Admin"],
+                ROLE_IDS["Director"],
                 password_hash,
                 timestamp,
                 timestamp,
@@ -73,16 +78,17 @@ def create_bootstrap_admin(username: str, email: str, password: str) -> dict:
             action="ADMIN_BOOTSTRAPPED",
             entity_type="user",
             entity_id=user_id,
-            after={"username": normalized_username, "email": normalized_email, "role": "Admin"},
+            after={"username": normalized_username, "email": normalized_email, "role": "Director"},
             correlation_id=user_id,
         )
         connection.commit()
-    return {"id": user_id, "username": normalized_username, "email": normalized_email, "role": "Admin"}
+    return {"id": user_id, "username": normalized_username, "email": normalized_email, "role": "Director"}
 
 
 def provision_user(username: str, email: str, role: str, actor_user_id: str) -> tuple[dict, str]:
-    if role not in {"Admin", "Manager", "Employee"}:
-        raise ValueError("Only Admin, Manager, or Employee accounts can be provisioned.")
+    role = _normalize_role_name(role)
+    if role not in {"Director", "Finance", "Manager", "Employee"}:
+        raise ValueError("Only Director, Finance, Manager, or Employee accounts can be provisioned.")
     marker = database._placeholder()
     normalized_username = username.strip()
     normalized_email = email.strip().lower()
@@ -128,14 +134,6 @@ def provision_user(username: str, email: str, role: str, actor_user_id: str) -> 
             connection.commit()
 
             token = create_onboarding_token(target_user_id)
-            create_notification(
-                actor_user_id,
-                "USER_REACTIVATED",
-                "User account reactivated",
-                f"{role} account {normalized_email} was reactivated.",
-                "user",
-                target_user_id,
-            )
             return (
                 {"id": target_user_id, "username": normalized_username, "email": normalized_email, "role": role, "reactivated": True},
                 token,
@@ -176,14 +174,6 @@ def provision_user(username: str, email: str, role: str, actor_user_id: str) -> 
         connection.commit()
 
     token = create_onboarding_token(user_id)
-    create_notification(
-        actor_user_id,
-        "USER_CREATED",
-        "User account created",
-        f"{role} account {email.strip().lower()} was created.",
-        "user",
-        user_id,
-    )
     return (
         {"id": user_id, "username": username.strip(), "email": email.strip().lower(), "role": role},
         token,
@@ -326,6 +316,13 @@ def deactivate_user(user_id: str, admin_user_id: str) -> dict:
             """,
             (user_id, user_id, user_id, user_id),
         )
+        connection.execute(
+            f"""
+            DELETE FROM finance_manager_assignments
+            WHERE finance_user_id = {marker} OR manager_id = {marker} OR assigned_by = {marker}
+            """,
+            (user_id, user_id, user_id),
+        )
 
         # Invalidate active sessions & tokens
         connection.execute(
@@ -432,15 +429,15 @@ def create_assignment(manager_id: str, employee_id: str, requested_by: str) -> d
             f"SELECT username, email FROM users WHERE id={database._placeholder()}",
             (employee_id,),
         ).fetchone()
-    admin_name = admin_info["username"] if admin_info else "Administrator"
+    admin_name = admin_info["username"] if admin_info else "Finance"
     emp_name = emp_info["username"] if emp_info else "Employee"
     emp_email = emp_info["email"] if emp_info else ""
 
     create_notification(
         manager_id,
         "ASSIGNMENT_PENDING",
-        f"Employee {emp_name} assigned by Admin {admin_name}",
-        f"Admin {admin_name} assigned employee {emp_name} ({emp_email}) to you for review and approval.",
+        f"Employee {emp_name} assigned by Finance {admin_name}",
+        f"Finance {admin_name} assigned employee {emp_name} ({emp_email}) to you for review and approval.",
         "assignment",
         assignment_id,
     )
@@ -558,3 +555,136 @@ def list_assignments(user_id: str, role: str) -> list[dict]:
             params,
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def create_finance_assignment(finance_user_id: str, manager_id: str, assigned_by: str) -> dict:
+    """Assigns a Finance user to oversee a Manager's requests and employee approvals."""
+    if finance_user_id == manager_id:
+        raise ValueError("A user cannot be assigned to themselves.")
+    marker = database._placeholder()
+    assignment_id = secrets.token_urlsafe(18)
+    timestamp = database.now_iso()
+
+    with database.get_connection() as connection:
+        fin_row = connection.execute(
+            f"SELECT u.id, u.username, r.name AS role, u.is_active FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id={marker}",
+            (finance_user_id,),
+        ).fetchone()
+        mgr_row = connection.execute(
+            f"SELECT u.id, u.username, u.email, r.name AS role, u.is_active FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id={marker}",
+            (manager_id,),
+        ).fetchone()
+
+        if not fin_row or fin_row["is_active"] != 1 or fin_row["role"] != "Finance":
+            raise ValueError("Selected finance user must be an active Finance account.")
+        if not mgr_row or mgr_row["is_active"] != 1 or mgr_row["role"] != "Manager":
+            raise ValueError("Selected manager must be an active Manager account.")
+
+        # Replace any existing assignment for this manager so each manager has one active Finance user
+        connection.execute(
+            f"DELETE FROM finance_manager_assignments WHERE manager_id={marker}",
+            (manager_id,),
+        )
+        connection.execute(
+            f"""
+            INSERT INTO finance_manager_assignments
+                (id, finance_user_id, manager_id, status, assigned_by, created_at, updated_at)
+            VALUES ({marker}, {marker}, {marker}, 'APPROVED', {marker}, {marker}, {marker})
+            """,
+            (assignment_id, finance_user_id, manager_id, assigned_by, timestamp, timestamp),
+        )
+        record_audit_event(
+            connection=connection,
+            actor_user_id=assigned_by,
+            action="FINANCE_ASSIGNMENT_CREATED",
+            entity_type="finance_manager_assignment",
+            entity_id=assignment_id,
+            after={"finance_user_id": finance_user_id, "manager_id": manager_id, "status": "APPROVED"},
+            correlation_id=assignment_id,
+        )
+        connection.commit()
+
+    fin_name = fin_row["username"]
+    create_notification(
+        manager_id,
+        "FINANCE_ASSIGNED",
+        f"Assigned to Finance user {fin_name}",
+        f"You have been assigned to Finance user {fin_name} for request posting and approvals.",
+        "finance_assignment",
+        assignment_id,
+    )
+    return {
+        "id": assignment_id,
+        "finance_user_id": finance_user_id,
+        "finance_username": fin_name,
+        "manager_id": manager_id,
+        "manager_username": mgr_row["username"],
+        "status": "APPROVED",
+    }
+
+
+def delete_finance_assignment(assignment_id: str, actor_user_id: str) -> dict:
+    marker = database._placeholder()
+    with database.get_connection() as connection:
+        row = connection.execute(
+            f"SELECT id, finance_user_id, manager_id FROM finance_manager_assignments WHERE id={marker}",
+            (assignment_id,),
+        ).fetchone()
+        if not row:
+            raise LookupError("Finance-Manager assignment not found.")
+        connection.execute(f"DELETE FROM finance_manager_assignments WHERE id={marker}", (assignment_id,))
+        record_audit_event(
+            connection=connection,
+            actor_user_id=actor_user_id,
+            action="FINANCE_ASSIGNMENT_REMOVED",
+            entity_type="finance_manager_assignment",
+            entity_id=assignment_id,
+            before=dict(row),
+            correlation_id=assignment_id,
+        )
+        connection.commit()
+    return {"id": assignment_id, "status": "REMOVED"}
+
+
+def list_finance_assignments(user_id: str, role: str) -> list[dict]:
+    marker = database._placeholder()
+    if role == "Manager":
+        clause = f"AND a.manager_id={marker}"
+        params = (user_id,)
+    else:
+        clause = ""
+        params = ()
+    with database.get_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT a.id, a.finance_user_id, f.username AS finance_username, f.email AS finance_email,
+                   a.manager_id, m.username AS manager_username, m.email AS manager_email,
+                   a.status, a.created_at, a.updated_at
+            FROM finance_manager_assignments a
+            JOIN users f ON f.id=a.finance_user_id
+            JOIN users m ON m.id=a.manager_id
+            WHERE 1=1 {clause}
+            ORDER BY a.created_at DESC
+            """,
+            params,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_assigned_finance_for_manager(manager_id: str) -> Optional[str]:
+    """Returns the active Finance user ID assigned to the given Manager, or None."""
+    if not manager_id:
+        return None
+    marker = database._placeholder()
+    with database.get_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT a.finance_user_id
+            FROM finance_manager_assignments a
+            JOIN users f ON f.id = a.finance_user_id
+            WHERE a.manager_id = {marker} AND a.status = 'APPROVED' AND f.is_active = 1
+            ORDER BY a.created_at DESC LIMIT 1
+            """,
+            (manager_id,),
+        ).fetchone()
+    return row["finance_user_id"] if row else None

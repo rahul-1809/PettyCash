@@ -106,19 +106,23 @@ class Phase11ReleaseVerificationTests(unittest.TestCase):
         os.environ["BACKUP_DIR"] = str(self.backup_dir)
 
         # 1. Provision Users
-        self.admin = create_bootstrap_admin("admin_rel", "admin_rel@example.com", "ReleaseAdminPass123!")
+        self.director = create_bootstrap_admin("admin_rel", "admin_rel@example.com", "ReleaseAdminPass123!")
+        self.director_token = create_auth_session(self.director["id"])
+        self.director_headers = {"Authorization": f"Bearer {self.director_token}"}
+
+        self.admin, _ = provision_user("fin_rel", "fin_rel@example.com", "Finance", self.director["id"])
         self.admin_token = create_auth_session(self.admin["id"])
         self.admin_headers = {"Authorization": f"Bearer {self.admin_token}"}
 
-        self.manager, _ = provision_user("mgr_rel", "mgr_rel@example.com", "Manager", self.admin["id"])
+        self.manager, _ = provision_user("mgr_rel", "mgr_rel@example.com", "Manager", self.director["id"])
         self.manager_token = create_auth_session(self.manager["id"])
         self.manager_headers = {"Authorization": f"Bearer {self.manager_token}"}
 
-        self.other_manager, _ = provision_user("mgr_other", "mgr_other@example.com", "Manager", self.admin["id"])
+        self.other_manager, _ = provision_user("mgr_other", "mgr_other@example.com", "Manager", self.director["id"])
         self.other_manager_token = create_auth_session(self.other_manager["id"])
         self.other_manager_headers = {"Authorization": f"Bearer {self.other_manager_token}"}
 
-        self.employee, _ = provision_user("emp_rel", "emp_rel@example.com", "Employee", self.admin["id"])
+        self.employee, _ = provision_user("emp_rel", "emp_rel@example.com", "Employee", self.director["id"])
         self.employee_token = create_auth_session(self.employee["id"])
         self.employee_headers = {"Authorization": f"Bearer {self.employee_token}"}
 
@@ -428,11 +432,11 @@ class Phase11ReleaseVerificationTests(unittest.TestCase):
         """Verify controlled deployment rollback execution, state restoration, and audit logging."""
         create_database_backup()
 
-        # Execute deployment rollback endpoint
+        # Execute deployment rollback endpoint (Director)
         res = self.client.post(
             "/api/operations/rollback",
             json={"target_version": "v1.0.0-rc1"},
-            headers=self.admin_headers,
+            headers=self.director_headers,
         )
         self.assertEqual(res.status_code, 200)
         data = res.json()

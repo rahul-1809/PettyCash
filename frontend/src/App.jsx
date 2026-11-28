@@ -41,7 +41,7 @@ export default function App() {
 
   // Determine initial view based on role
   const getInitialViewForRole = (role) => {
-    if (role === 'Admin') return 'admin_dashboard';
+    if (role === 'Director' || role === 'Admin' || role === 'Finance') return 'admin_dashboard';
     if (role === 'Manager') return 'manager_dashboard';
     return 'employee_dashboard';
   };
@@ -98,10 +98,16 @@ export default function App() {
       const unreadNotifs = await api.listNotifications(true).catch(() => []);
       const unreadCount = Array.isArray(unreadNotifs) ? unreadNotifs.length : 0;
 
-      if (user.role === 'Admin') {
+      if (user.role === 'Director' || user.role === 'Admin') {
+        setBadges((prev) => ({
+          ...prev,
+          pendingPostings: 0,
+          unreadNotifications: currentView === 'notifications' ? 0 : unreadCount,
+        }));
+      } else if (user.role === 'Finance') {
         const reqs = await api.listRequests().catch(() => []);
         const approvedCount = reqs.filter(
-          (r) => r.status === 'SUPPORTING_UPLOADED' || (r.status === 'APPROVED' && r.supporting_files?.length > 0)
+          (r) => r.status === 'APPROVED' || r.status === 'SUPPORTING_UPLOADED'
         ).length;
         setBadges((prev) => ({
           ...prev,
@@ -231,9 +237,9 @@ export default function App() {
             if (viewId === 'admin_postings') setBadges((b) => ({ ...b, pendingPostings: 0 }));
             if (viewId === 'notifications') setBadges((b) => ({ ...b, unreadNotifications: 0 }));
 
-            // Guard: Restrict spreadsheet utility to Admin & Manager only
-            if (viewId === 'spreadsheet_tool' && user.role === 'Employee') {
-              setCurrentView('employee_dashboard');
+            // Guard: Restrict spreadsheet utility to Finance & Manager only
+            if (viewId === 'spreadsheet_tool' && user.role !== 'Finance' && user.role !== 'Manager') {
+              setCurrentView(getDefaultView(user.role));
             } else {
               setCurrentView(viewId);
             }
@@ -262,9 +268,9 @@ export default function App() {
               />
             )}
 
-            {/* Controlled Spreadsheet Migration / Import Utility (Admin & Manager Only) */}
+            {/* Controlled Spreadsheet Migration / Import Utility (Finance & Manager Only) */}
             {currentView === 'spreadsheet_tool' &&
-              (user.role === 'Admin' || user.role === 'Manager') && (
+              (user.role === 'Finance' || user.role === 'Manager') && (
                 <div className="space-y-4">
                   <div className="p-4 bg-slate-900 border border-slate-800 rounded-lg flex items-center justify-between">
                     <div>
@@ -285,8 +291,8 @@ export default function App() {
                 </div>
               )}
 
-            {/* Admin Views */}
-            {user.role === 'Admin' &&
+            {/* Director & Finance Views */}
+            {(user.role === 'Director' || user.role === 'Admin' || user.role === 'Finance') &&
               currentView !== 'profile' &&
               currentView !== 'notifications' &&
               currentView !== 'spreadsheet_tool' && (

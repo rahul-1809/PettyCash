@@ -29,13 +29,16 @@ class Phase10Tests(unittest.TestCase):
         database.init_db()
 
         # Users setup
-        self.admin = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
+        self.director = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
+        self.director_token = create_auth_session(self.director["id"])
+
+        self.admin, _ = provision_user("finance", "finance@example.com", "Finance", self.director["id"])
         self.admin_token = create_auth_session(self.admin["id"])
 
-        self.manager, _ = provision_user("manager", "manager@example.com", "Manager", self.admin["id"])
+        self.manager, _ = provision_user("manager", "manager@example.com", "Manager", self.director["id"])
         self.manager_token = create_auth_session(self.manager["id"])
 
-        self.employee, _ = provision_user("employee", "employee@example.com", "Employee", self.admin["id"])
+        self.employee, _ = provision_user("employee", "employee@example.com", "Employee", self.director["id"])
         self.employee_token = create_auth_session(self.employee["id"])
 
         # Master data setup

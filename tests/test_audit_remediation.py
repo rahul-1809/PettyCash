@@ -37,14 +37,20 @@ class AuditRemediationTests(unittest.TestCase):
         database.DATABASE_URL = None
         database.init_db()
 
-        # Bootstrap admin & tokens
-        self.admin = create_bootstrap_admin("admin_aud", "admin_aud@example.com", "Password123456!")
+        # Bootstrap director, finance, managers & employees
+        self.director = create_bootstrap_admin("admin_aud", "admin_aud@example.com", "Password123456!")
+        self.director_token = create_auth_session(self.director["id"])
+
+        self.admin, _ = provision_user("fin_aud", "fin_aud@example.com", "Finance", self.director["id"])
         self.admin_token = create_auth_session(self.admin["id"])
 
-        self.employee1, _ = provision_user("emp1_aud", "emp1@example.com", "Employee", self.admin["id"])
+        self.manager1, _ = provision_user("mgr1_aud", "mgr1@example.com", "Manager", self.director["id"])
+        self.manager1_token = create_auth_session(self.manager1["id"])
+
+        self.employee1, _ = provision_user("emp1_aud", "emp1@example.com", "Employee", self.director["id"])
         self.employee1_token = create_auth_session(self.employee1["id"])
 
-        self.employee2, _ = provision_user("emp2_aud", "emp2@example.com", "Employee", self.admin["id"])
+        self.employee2, _ = provision_user("emp2_aud", "emp2@example.com", "Employee", self.director["id"])
         self.employee2_token = create_auth_session(self.employee2["id"])
 
         self.client = TestClient(app)
@@ -63,12 +69,26 @@ class AuditRemediationTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/default-data").status_code, 401)
         self.assertEqual(self.client.post("/api/recalculate", json={}).status_code, 401)
 
-        # 2. Employee 1 creates a session
+        # 2. Employee & Director are blocked from spreadsheet sessions (403); Manager & Finance allowed
+        self.assertEqual(
+            self.client.post(
+                "/api/sessions",
+                headers={"Authorization": f"Bearer {self.employee1_token}"},
+                json={"name": "Blocked", "opening_balance": 100.0, "start_date": "2026-11-01", "end_date": "2026-11-30", "transactions": []},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get("/api/sessions", headers={"Authorization": f"Bearer {self.director_token}"}).status_code,
+            403,
+        )
+
+        # Manager 1 creates a session
         create_res = self.client.post(
             "/api/sessions",
-            headers={"Authorization": f"Bearer {self.employee1_token}"},
+            headers={"Authorization": f"Bearer {self.manager1_token}"},
             json={
-                "name": "Employee 1 Private Session",
+                "name": "Manager 1 Private Session",
                 "opening_balance": 1000.0,
                 "start_date": "2026-11-01",
                 "end_date": "2026-11-30",
@@ -78,21 +98,21 @@ class AuditRemediationTests(unittest.TestCase):
         self.assertEqual(create_res.status_code, 200)
         session_id = create_res.json()["id"]
 
-        # 3. Employee 2 cannot access Employee 1's session (IDOR protection)
+        # 3. Employee cannot access Manager's session
         emp2_get = self.client.get(
             f"/api/sessions/{session_id}",
             headers={"Authorization": f"Bearer {self.employee2_token}"},
         )
         self.assertEqual(emp2_get.status_code, 403)
 
-        # 4. Employee 2 cannot delete Employee 1's session
+        # 4. Employee cannot delete Manager's session
         emp2_del = self.client.delete(
             f"/api/sessions/{session_id}",
             headers={"Authorization": f"Bearer {self.employee2_token}"},
         )
         self.assertEqual(emp2_del.status_code, 403)
 
-        # 5. Admin can access it
+        # 5. Finance can access it
         admin_get = self.client.get(
             f"/api/sessions/{session_id}",
             headers={"Authorization": f"Bearer {self.admin_token}"},
@@ -343,25 +363,25 @@ class AuditRemediationTests(unittest.TestCase):
 
     def test_user_deactivation_and_reactivation_flow(self):
         """Verify user deactivation, reactivation, and re-provisioning of inactive users."""
-        # 1. Provision a test employee
+        # 1. Provision a test employee (Director)
         prov_res = self.client.post(
             "/api/users",
-            headers={"Authorization": f"Bearer {self.admin_token}"},
+            headers={"Authorization": f"Bearer {self.director_token}"},
             json={"username": "temp_deact_user", "email": "temp_deact@example.com", "role": "Employee"},
         )
         self.assertEqual(prov_res.status_code, 200)
         target_uid = prov_res.json()["id"]
 
-        # 2. Deactivate the user
+        # 2. Deactivate the user (Director)
         deact_res = self.client.post(
             f"/api/users/{target_uid}/deactivate",
-            headers={"Authorization": f"Bearer {self.admin_token}"},
+            headers={"Authorization": f"Bearer {self.director_token}"},
         )
         self.assertEqual(deact_res.status_code, 200)
         self.assertEqual(deact_res.json()["status"], "DEACTIVATED")
 
         # 3. List users includes inactive user with is_active = 0
-        list_res = self.client.get("/api/users", headers={"Authorization": f"Bearer {self.admin_token}"})
+        list_res = self.client.get("/api/users", headers={"Authorization": f"Bearer {self.director_token}"})
         self.assertEqual(list_res.status_code, 200)
         u_record = next(u for u in list_res.json() if u["id"] == target_uid)
         self.assertEqual(u_record["is_active"], 0)
@@ -369,7 +389,7 @@ class AuditRemediationTests(unittest.TestCase):
         # 4. Re-provisioning the same email automatically reactivates the account
         reprov_res = self.client.post(
             "/api/users",
-            headers={"Authorization": f"Bearer {self.admin_token}"},
+            headers={"Authorization": f"Bearer {self.director_token}"},
             json={"username": "temp_deact_user", "email": "temp_deact@example.com", "role": "Manager"},
         )
         self.assertEqual(reprov_res.status_code, 200)
@@ -377,6 +397,6 @@ class AuditRemediationTests(unittest.TestCase):
         self.assertEqual(reprov_res.json()["role"], "Manager")
 
         # Verify active in DB
-        list_res2 = self.client.get("/api/users", headers={"Authorization": f"Bearer {self.admin_token}"})
+        list_res2 = self.client.get("/api/users", headers={"Authorization": f"Bearer {self.director_token}"})
         u_record2 = next(u for u in list_res2.json() if u["id"] == target_uid)
         self.assertEqual(u_record2["is_active"], 1)

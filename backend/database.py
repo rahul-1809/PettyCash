@@ -166,7 +166,8 @@ def init_db():
 
 def seed_system_roles():
     roles = (
-        ("role-admin", "Admin"),
+        ("role-admin", "Director"),
+        ("role-finance", "Finance"),
         ("role-manager", "Manager"),
         ("role-employee", "Employee"),
     )
@@ -177,7 +178,7 @@ def seed_system_roles():
                 f"""
                 INSERT INTO roles (id, name, created_at)
                 VALUES ({marker}, {marker}, {marker})
-                ON CONFLICT (name) DO NOTHING
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (role_id, name, now_iso()),
             )
@@ -318,7 +319,7 @@ def list_sessions(user_id: Optional[str] = None, role: Optional[str] = None) -> 
     global _SESSION_LIST_CACHE, _SESSION_LIST_CACHE_TS
     is_testing = os.getenv("TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
     now = time.time()
-    if not is_testing and _SESSION_LIST_CACHE is not None and (now - _SESSION_LIST_CACHE_TS < 45.0) and role in ("Admin", "Manager"):
+    if not is_testing and _SESSION_LIST_CACHE is not None and (now - _SESSION_LIST_CACHE_TS < 45.0) and role in ("Finance", "Manager"):
         return _SESSION_LIST_CACHE
 
     with get_connection() as conn:
@@ -344,7 +345,7 @@ def list_sessions(user_id: Optional[str] = None, role: Optional[str] = None) -> 
                     continue
             result.append(row_dict)
 
-        if not is_testing and role in ("Admin", "Manager"):
+        if not is_testing and role in ("Finance", "Manager"):
             _SESSION_LIST_CACHE = result
             _SESSION_LIST_CACHE_TS = now
         return result

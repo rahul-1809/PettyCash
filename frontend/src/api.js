@@ -184,6 +184,8 @@ export const api = {
     request('/auth/bootstrap', { method: 'POST', body: { username, email, password } }),
   setPassword: (token, password) =>
     request('/auth/set-password', { method: 'POST', body: { token, password } }),
+  changePassword: (current_password, new_password) =>
+    request('/auth/change-password', { method: 'POST', body: { current_password, new_password } }),
 
   // ── Users & Assignments
   listUsers: (includeInactive = true) => request(`/users?include_inactive=${includeInactive}`),
@@ -201,6 +203,13 @@ export const api = {
       method: 'POST',
       body: { decision, reason },
     }),
+  listFinanceAssignments: () => request('/finance-assignments'),
+  createFinanceAssignment: (finance_user_id, manager_id) =>
+    request('/finance-assignments', { method: 'POST', body: { finance_user_id, manager_id } }),
+  deleteFinanceAssignment: (assignment_id) =>
+    request(`/finance-assignments/${assignment_id}`, { method: 'DELETE' }),
+  createFinanceDirectExpense: (payload) =>
+    request('/finance/direct-expense', { method: 'POST', body: payload }),
 
   // ── Master Data
   getProjects: () => request('/projects'),

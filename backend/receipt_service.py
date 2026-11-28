@@ -55,8 +55,8 @@ def _require_admin(connection, admin_id: str) -> None:
         """,
         (admin_id,),
     ).fetchone()
-    if not row or row["name"] != "Admin":
-        raise PermissionError("Only Admin users can create company receipts.")
+    if not row or row["name"] != "Finance":
+        raise PermissionError("Only Finance users can create company receipts.")
 
 
 def _active_record(connection, table: str, record_id: str) -> bool:
@@ -283,14 +283,6 @@ def create_company_receipt(
                 }
             raise exc
 
-    create_notification(
-        admin_id,
-        "COMPANY_RECEIPT_POSTED",
-        "Company cash receipt posted",
-        f"{normalized_amount} was added to the petty cash balance.",
-        "company_receipt",
-        receipt_id,
-    )
     try:
         invalidate_report_cache()
     except Exception:

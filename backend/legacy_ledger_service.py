@@ -25,8 +25,8 @@ def _require_admin(connection, admin_id: str) -> None:
         """,
         (admin_id,),
     ).fetchone()
-    if not row or row["name"] != "Admin":
-        raise PermissionError("Only Admin users have access to the Legacy Ledger workspace.")
+    if not row or row["name"] != "Finance":
+        raise PermissionError("Only Finance users have access to the Legacy Ledger workspace.")
 
 
 def import_session_to_legacy(admin_id: str, session_id: str) -> dict:

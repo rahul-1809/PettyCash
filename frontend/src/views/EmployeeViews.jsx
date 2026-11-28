@@ -18,13 +18,21 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import Modal from '../components/Modal';
+import TablePagination from '../components/TablePagination';
 
 export default function EmployeeViews({ currentView, onNavigate, addToast, user }) {
   const [loading, setLoading] = useState(false);
-  const [requests, setRequests] = useState([]);
+  const [requests, setRequests] = useState(() => {
+    try {
+      const c = localStorage.getItem(`pc_emp_reqs_${user?.id}`);
+      return c ? JSON.parse(c) : [];
+    } catch { return []; }
+  });
   const [projects, setProjects] = useState([]);
   const [ledgers, setLedgers] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(10);
 
   // Modals state
   const [selectedRequest, setSelectedRequest] = useState(null);
@@ -61,6 +69,9 @@ export default function EmployeeViews({ currentView, onNavigate, addToast, user 
         api.listAssignments(),
       ]);
       setRequests(reqData || []);
+      try {
+        localStorage.setItem(`pc_emp_reqs_${user?.id}`, JSON.stringify(reqData || []));
+      } catch (_) {}
       setProjects((projData || []).filter((p) => p.is_active));
       setLedgers((ledgData || []).filter((l) => l.is_active));
       
@@ -615,12 +626,12 @@ export default function EmployeeViews({ currentView, onNavigate, addToast, user 
             </p>
           </div>
 
-          {/* Section 1: Approved - Awaiting Voucher Upload (Action Required!) */}
+          {/* Section 1: Approved - Ready for Finance Posting (Optional Voucher Upload) */}
           {submitted.filter((s) => s.status === 'APPROVED').length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                Action Required: Manager Approved — Please Upload Vouchers ({submitted.filter((s) => s.status === 'APPROVED').length})
+                Manager Approved — In Finance Posting Queue ({submitted.filter((s) => s.status === 'APPROVED').length})
               </div>
 
               {submitted
@@ -635,11 +646,11 @@ export default function EmployeeViews({ currentView, onNavigate, addToast, user 
                         <div className="font-semibold text-slate-100 text-sm flex items-center gap-2">
                           <span>{s.purpose}</span>
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700">
-                            APPROVED BY MANAGER
+                            APPROVED • SENT TO FINANCE
                           </span>
                         </div>
                         <div className="text-xs text-slate-400 mt-1">
-                          Date: {s.request_date} • Category: {s.category} • Amount: <strong className="text-slate-100">₹{parseFloat(s.amount).toFixed(2)}</strong>
+                          Date: {s.request_date} • Category: {s.category_name || s.category} • Amount: <strong className="text-slate-100">₹{parseFloat(s.amount).toFixed(2)}</strong>
                         </div>
                       </div>
 
@@ -654,48 +665,19 @@ export default function EmployeeViews({ currentView, onNavigate, addToast, user 
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold border border-slate-700 cursor-pointer"
                         >
                           <FileUp className="w-3.5 h-3.5" />
-                          {s.supporting_files && s.supporting_files.length > 0 ? 'Add Another Voucher' : 'Upload Voucher'}
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={!s.supporting_files || s.supporting_files.length === 0 || submittingPostingId === s.id}
-                          onClick={() => handleSubmitForPosting(s.id)}
-                          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer ${
-                            s.supporting_files && s.supporting_files.length > 0
-                              ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
-                              : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                          }`}
-                          title={
-                            s.supporting_files && s.supporting_files.length > 0
-                              ? 'Submit vouchers to finance for posting'
-                              : 'Upload at least one voucher file first'
-                          }
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          {submittingPostingId === s.id ? 'Submitting...' : 'Submit for Admin Posting'}
+                          {s.supporting_count > 0 ? 'Add Another Voucher' : 'Upload Voucher (Optional)'}
                         </button>
                       </div>
                     </div>
 
-                    {/* Attached Vouchers List */}
-                    {s.supporting_files && s.supporting_files.length > 0 ? (
+                    {s.supporting_count > 0 ? (
                       <div className="p-2.5 bg-slate-900/90 rounded border border-slate-800 flex flex-wrap items-center gap-2 text-xs">
-                        <span className="text-slate-400 font-medium">Attached Vouchers:</span>
-                        {s.supporting_files.map((f) => (
-                          <span
-                            key={f.id}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-mono text-[11px]"
-                          >
-                            <FileText className="w-3 h-3 text-emerald-400" />
-                            {f.original_filename}
-                          </span>
-                        ))}
+                        <span className="text-emerald-400 font-medium">{s.supporting_count} voucher(s) attached.</span>
                       </div>
                     ) : (
-                      <div className="text-[11px] text-amber-300/90 flex items-center gap-1.5">
-                        <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        Please attach your receipt voucher file (PDF or Image) to enable the "Submit for Admin Posting" button.
+                      <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        Finance can post this request directly. You may upload supporting vouchers now or later after posting.
                       </div>
                     )}
                   </div>
@@ -784,37 +766,61 @@ export default function EmployeeViews({ currentView, onNavigate, addToast, user 
                       </td>
                     </tr>
                   ) : (
-                    history.map((h) => (
+                    history
+                      .slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize)
+                      .map((h) => (
                       <tr key={h.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-3 font-mono">{h.request_date}</td>
                         <td className="p-3 font-medium text-slate-100">{h.purpose}</td>
                         <td className="p-3 text-slate-400">
-                          {h.project_name || 'Project'} / {h.category}
+                          {h.project_name || 'Project'} / {h.category_name || h.category}
                         </td>
                         <td className="p-3 font-bold text-slate-100">
                           ₹{parseFloat(h.amount).toFixed(2)}
                         </td>
                         <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            h.status === 'POSTED'
-                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                              : 'bg-rose-950 text-rose-300 border border-rose-800'
-                          }`}>
-                            {h.status}
-                          </span>
+                          {h.status === 'POSTED' ? (
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                              h.supporting_count > 0
+                                ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                                : 'bg-amber-950 text-amber-300 border-amber-800'
+                            }`}>
+                              {h.supporting_count > 0 ? 'Posted (Voucher Attached)' : 'Posted (Voucher Pending)'}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">
+                              {h.status}
+                            </span>
+                          )}
                         </td>
                         <td className="p-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedRequest(h);
-                              setIsDetailOpen(true);
-                            }}
-                            className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800"
-                            title="View details"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
+                          <div className="inline-flex items-center gap-1 justify-end">
+                            {h.status === 'POSTED' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTargetVoucherRequest(h);
+                                  setVoucherFile(null);
+                                  setVoucherModalOpen(true);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 cursor-pointer"
+                                title="Upload supporting voucher"
+                              >
+                                <FileUp className="w-3 h-3" /> Voucher
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedRequest(h);
+                                setIsDetailOpen(true);
+                              }}
+                              className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 cursor-pointer"
+                              title="View details"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -822,6 +828,13 @@ export default function EmployeeViews({ currentView, onNavigate, addToast, user 
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              totalItems={history.length}
+              currentPage={historyPage}
+              pageSize={historyPageSize}
+              onPageChange={setHistoryPage}
+              onPageSizeChange={(s) => { setHistoryPageSize(s); setHistoryPage(1); }}
+            />
           </div>
         </div>
       )}

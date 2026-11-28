@@ -76,8 +76,8 @@ export default function LoginView({ onLoginSuccess, addToast }) {
       await api.bootstrapAdmin(bootUsername.trim(), bootEmail.trim(), bootPassword);
       addToast({
         type: 'success',
-        title: 'Administrator Created',
-        message: 'Admin account provisioned. You can now log in.',
+        title: 'Director Created',
+        message: 'Director account provisioned. You can now log in.',
       });
       setLoginEmail(bootEmail);
       setAdminExists(true);
@@ -165,7 +165,7 @@ export default function LoginView({ onLoginSuccess, addToast }) {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Init Admin
+              Init Director
             </button>
           )}
         </div>
@@ -339,7 +339,7 @@ export default function LoginView({ onLoginSuccess, addToast }) {
                 disabled={loading}
                 className="w-full flex justify-center items-center gap-2 py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400 disabled:opacity-50 transition-colors cursor-pointer"
               >
-                {loading ? 'Initializing...' : 'Bootstrap Administrator'}
+                {loading ? 'Initializing...' : 'Bootstrap Director'}
               </button>
             </form>
           )}

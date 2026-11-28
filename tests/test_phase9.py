@@ -57,9 +57,12 @@ class Phase9Tests(unittest.TestCase):
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         os.environ["BACKUP_DIR"] = str(self.backup_dir)
 
-        # Create admin, manager, employee
+        # Create director, finance, manager, employee
         self.admin = create_bootstrap_admin("admin", "admin@example.com", "a-secure-password")
         self.admin_token = create_auth_session(self.admin["id"])
+
+        self.finance, _ = provision_user("finance", "finance@example.com", "Finance", self.admin["id"])
+        self.finance_token = create_auth_session(self.finance["id"])
 
         self.manager, _ = provision_user("manager", "manager@example.com", "Manager", self.admin["id"])
         self.manager_token = create_auth_session(self.manager["id"])
@@ -144,7 +147,7 @@ class Phase9Tests(unittest.TestCase):
         res3 = self.client.post(
             "/api/financial-periods",
             headers={
-                "Authorization": f"Bearer {self.admin_token}",
+                "Authorization": f"Bearer {self.finance_token}",
                 "X-Correlation-ID": audit_corr_id,
             },
             json={"period_start": "2026-11-01", "period_end": "2026-11-30"},
